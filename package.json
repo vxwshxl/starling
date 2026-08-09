@@ -1,0 +1,18 @@
+{
+  "name": "starling",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Speech-to-speech AI assistant for low-resource Northeast Indian languages",
+  "scripts": {
+    "dev:web": "pnpm --filter @starling/web dev",
+    "build:web": "pnpm --filter @starling/web build",
+    "dev:api": "cd services/asr && uv run uvicorn starling.main:app --reload --port 8000",
+    "lab": "cd services/asr && uv run python -m starling.lab",
+    "smoke": "cd services/asr && uv run python -m starling.smoke",
+    "setup:api": "cd services/asr && uv sync"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@10.26.2"
+}

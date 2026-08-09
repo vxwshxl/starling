@@ -1,0 +1,44 @@
+# --- Python ---
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# --- Models & weights (never commit; these are GB-scale) ---
+models/
+*.safetensors
+*.ckpt
+*.pt
+*.bin
+*.npz
+
+# --- Audio artefacts ---
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+*.webm
+
+# --- Secrets ---
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+# --- Node / Next ---
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+# --- Scratch ---
+scratch/
+tmp/
+
+# --- macOS ---
+.DS_Store
