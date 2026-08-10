@@ -77,18 +77,32 @@ def _language_config() -> str:
 
 
 def _codes_exist_in_libraries() -> str:
-    """The whole point of the two-code design: verify against reality."""
+    """The whole point of the two-code design: verify against reality.
+
+    Each language's asr_code is checked against ITS OWN backend, not against
+    Whisper globally -- Bodo's "brx" is a real IndicConformer language and
+    deliberately not a Whisper one.
+    """
     from mlx_whisper.tokenizer import LANGUAGES as WHISPER_LANGS
     from omnivoice.utils.lang_map import LANG_IDS as OMNI_LANGS
 
     from . import languages
+    from .asr_backends import INDIC_CONFORMER_REPOS
+    from .config import settings
 
     notes: list[str] = []
     for lang in languages.LANGUAGES.values():
-        if lang.asr_code and lang.asr_code not in WHISPER_LANGS:
-            raise AssertionError(
-                f"{lang.code}: asr_code {lang.asr_code!r} is not a Whisper language"
-            )
+        backend = lang.asr_backend or settings.asr_backend
+        if lang.asr_code:
+            if backend == "mlx-whisper" and lang.asr_code not in WHISPER_LANGS:
+                raise AssertionError(
+                    f"{lang.code}: asr_code {lang.asr_code!r} is not a Whisper language"
+                )
+            if backend == "indic-conformer" and lang.asr_code not in INDIC_CONFORMER_REPOS:
+                raise AssertionError(
+                    f"{lang.code}: asr_code {lang.asr_code!r} has no IndicConformer "
+                    "ONNX export configured"
+                )
         if lang.tts_code and lang.tts_code not in OMNI_LANGS:
             raise AssertionError(
                 f"{lang.code}: tts_code {lang.tts_code!r} is not an OmniVoice language"
@@ -116,7 +130,17 @@ def _model_apis_present() -> str:
     gen = inspect.signature(OmniVoice.generate)
     for param in ("text", "language", "ref_audio", "ref_text"):
         assert param in gen.parameters, f"OmniVoice.generate has no {param!r}"
-    return "mlx_whisper.transcribe and OmniVoice.generate signatures match our calls"
+
+    import onnx_asr
+
+    assert callable(onnx_asr.load_model)
+    rec = inspect.signature(onnx_asr.load_model)
+    assert "model" in rec.parameters, "onnx_asr.load_model has no 'model' parameter"
+
+    return (
+        "mlx_whisper.transcribe, OmniVoice.generate and onnx_asr.load_model "
+        "signatures match our call sites"
+    )
 
 
 def _fastapi_app() -> str:

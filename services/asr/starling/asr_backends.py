@@ -1,13 +1,19 @@
 """Swappable ASR backends.
 
-The pipeline talks to `ASRBackend` and never imports mlx_whisper directly, so
-the planned phase-2 swap to ai4bharat/indic-conformer-600m-multilingual (which
-covers Assamese and Bodo properly) is a new class here plus one line in
-`build_backend`. Nothing in pipeline.py, main.py or lab.py changes.
+The pipeline talks to `ASRBackend` and never imports mlx_whisper directly,
+which is what let the Bodo recogniser land as a new class here plus a line in
+`build_backend`, with nothing in pipeline.py, main.py or lab.py changing.
+
+Two backends now co-exist, chosen per language via `Language.asr_backend`:
+
+  mlx-whisper      Assamese and Bengali. 100 languages, no Bodo at any size.
+  indic-conformer  Bodo. AI4Bharat's IndicConformer, ONNX, one repo per
+                   language, run through onnxruntime.
 """
 
 from __future__ import annotations
 
+import gc
 import logging
 from pathlib import Path
 from typing import Any, Protocol
@@ -117,13 +123,111 @@ class MLXWhisperBackend:
         }
 
 
-def build_backend(kind: str | None = None) -> ASRBackend:
+#: AI4Bharat's IndicConformer, exported to ONNX by OpenVoiceOS and republished
+#: MIT. The upstream `ai4bharat/*` repos are gated behind a Hugging Face terms
+#: click; these carry the same weights (see each card's `base_model`) and are
+#: not, which is why they are what we point at.
+#:
+#: One repo per language -- unlike Whisper there is no single multilingual
+#: checkpoint here, so a backend instance is bound to one language.
+INDIC_CONFORMER_REPOS: dict[str, str] = {
+    "as": "OpenVoiceOS/ai4bharat-indicconformer-as-onnx",
+    "bn": "OpenVoiceOS/ai4bharat-indicconformer-bn-onnx",
+    "brx": "OpenVoiceOS/ai4bharat-indicconformer-brx-onnx",
+}
+
+
+class IndicConformerBackend:
+    """AI4Bharat IndicConformer (NeMo conformer-CTC) via onnxruntime.
+
+    This is the backend that makes Bodo real: Whisper has no `brx` at any model
+    size, so before this existed Bodo audio was recognised as Assamese and the
+    transcript was fiction.
+
+    Running through onnxruntime rather than torch is a deliberate second win.
+    torch's MPS backend segfaults loading OmniVoice in fp16 and silently emits
+    near-silence in fp32 on this machine; ONNX never touches that code path,
+    and onnxruntime picks up CoreML on Apple Silicon by itself.
+
+    Verified against the installed package (onnx-asr 0.12.0):
+        onnx_asr.load_model(repo) -> TextResultsAsrAdapter
+        adapter.recognize(path_or_ndarray, *, sample_rate=16000) -> str
+    """
+
+    name = "indic-conformer"
+
+    def __init__(self, language_code: str) -> None:
+        try:
+            self.model_repo = INDIC_CONFORMER_REPOS[language_code]
+        except KeyError:
+            known = ", ".join(sorted(INDIC_CONFORMER_REPOS))
+            raise ValueError(
+                f"No IndicConformer ONNX export configured for {language_code!r}. "
+                f"Known: {known}"
+            ) from None
+        self.language_code = language_code
+        self._model: Any | None = None
+
+    @property
+    def loaded(self) -> bool:
+        return self._model is not None
+
+    def load(self) -> None:
+        if self._model is not None:
+            return
+        import onnx_asr
+
+        logger.info(
+            "Loading IndicConformer %s for %r -- first run downloads ~590 MB "
+            "from the HF hub.",
+            self.model_repo,
+            self.language_code,
+        )
+        self._model = onnx_asr.load_model(self.model_repo)
+        logger.info("IndicConformer ready: %s", self.model_repo)
+
+    def unload(self) -> None:
+        self._model = None
+        gc.collect()
+        logger.info("IndicConformer unloaded: %s", self.model_repo)
+
+    def transcribe(self, wav_path: Path, language_code: str) -> dict[str, Any]:
+        self.load()
+        if language_code != self.language_code:
+            # Each instance owns exactly one language's weights, so a mismatch
+            # means the router handed us the wrong backend. Fail loudly rather
+            # than transcribe with the wrong model and return plausible noise.
+            raise ValueError(
+                f"{self.name} instance is bound to {self.language_code!r} but was "
+                f"asked for {language_code!r}"
+            )
+        assert self._model is not None
+        # 16 kHz is guaranteed by audio.to_wav_16k() at the pipeline boundary,
+        # but state it rather than rely on the library's default.
+        text = self._model.recognize(str(wav_path), sample_rate=16_000)
+        return {
+            "text": (text or "").strip(),
+            "language": self.language_code,
+            "segments": [],
+        }
+
+
+def build_backend(
+    kind: str | None = None, language_code: str | None = None
+) -> ASRBackend:
+    """Construct a backend. `language_code` is the ASR code, not Starling's key.
+
+    Only the per-language backends need it; MLXWhisperBackend serves every
+    language from one checkpoint and ignores it.
+    """
     kind = kind or settings.asr_backend
     if kind == "mlx-whisper":
         return MLXWhisperBackend()
     if kind == "indic-conformer":
-        raise NotImplementedError(
-            "The indic-conformer backend is a phase-2 item and is not built yet. "
-            "Set STARLING_ASR_BACKEND=mlx-whisper."
-        )
+        if language_code is None:
+            raise ValueError(
+                "indic-conformer ships one model per language, so build_backend "
+                "needs a language_code"
+            )
+        return IndicConformerBackend(language_code)
     raise ValueError(f"Unknown ASR backend {kind!r}")

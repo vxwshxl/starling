@@ -16,6 +16,7 @@ import logging
 import threading
 from typing import Any
 
+from . import languages
 from .asr_backends import ASRBackend, build_backend
 from .config import settings
 
@@ -26,19 +27,35 @@ logger = logging.getLogger("starling.models")
 _asr_lock = threading.Lock()
 _tts_lock = threading.Lock()
 
-_asr: ASRBackend | None = None
+# Keyed by (backend kind, language slot). More than one ASR backend can be
+# resident because no single recogniser covers every language: Whisper serves
+# Assamese and Bengali, IndicConformer serves Bodo. Each entry still obeys the
+# load-once invariant -- this is a registry, not per-request loading.
+_asr: dict[tuple[str, str], ASRBackend] = {}
 _tts: Any | None = None
 
+#: Backends that ship one checkpoint per language, so the registry key has to
+#: include the language. Whisper is multilingual and shares a single entry.
+_PER_LANGUAGE_BACKENDS = frozenset({"indic-conformer"})
 
-def get_asr() -> ASRBackend:
-    """The ASR backend, constructed and loaded on first call."""
-    global _asr
-    if _asr is None:
-        with _asr_lock:
-            if _asr is None:
-                _asr = build_backend()
-    _asr.load()
-    return _asr
+
+def get_asr(language_code: str | None = None) -> ASRBackend:
+    """The ASR backend for a language, constructed and loaded on first call.
+
+    `language_code` is Starling's key (e.g. "brx"), not the backend's code.
+    """
+    code = language_code or languages.DEFAULT_LANGUAGE
+    kind = languages.asr_backend_for(code) or settings.asr_backend
+    asr_code = languages.asr_code_for(code)
+    key = (kind, asr_code if kind in _PER_LANGUAGE_BACKENDS else "*")
+
+    with _asr_lock:
+        backend = _asr.get(key)
+        if backend is None:
+            backend = build_backend(kind, asr_code)
+            _asr[key] = backend
+    backend.load()
+    return backend
 
 
 def get_tts() -> Any:
@@ -97,11 +114,20 @@ def tts_sample_rate() -> int:
 
 def status() -> dict[str, Any]:
     """What is currently resident. Cheap: never triggers a load."""
+    resident = [
+        {"backend": b.name, "model": getattr(b, "model_repo", "?")}
+        for b in _asr.values()
+        if b.loaded
+    ]
     return {
         "asr": {
+            # The configured default, i.e. what serves any language that does
+            # not name its own backend. `resident` is the honest full picture,
+            # since Bodo pulls in a second recogniser alongside this one.
             "backend": settings.asr_backend,
             "model": settings.whisper_model,
-            "loaded": _asr is not None and _asr.loaded,
+            "loaded": bool(resident),
+            "resident": resident,
         },
         "tts": {
             "model": settings.tts_model,
@@ -118,9 +144,11 @@ def unload_all() -> dict[str, bool]:
 
     freed = {"asr": False, "tts": False}
 
-    if _asr is not None and _asr.loaded:
-        _asr.unload()
-        freed["asr"] = True
+    for backend in _asr.values():
+        if backend.loaded:
+            backend.unload()
+            freed["asr"] = True
+    _asr.clear()
 
     if _tts is not None:
         del _tts

@@ -102,7 +102,7 @@ def transcribe(
         duration = probe_duration(wav)
 
     with timings.stage("asr_load"):
-        backend = models.get_asr()
+        backend = models.get_asr(language_code)
 
     with timings.stage("asr"):
         raw = backend.transcribe(wav, languages.asr_code_for(language_code))

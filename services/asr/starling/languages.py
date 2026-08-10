@@ -66,6 +66,11 @@ class Language:
 
     notes: str = ""
 
+    asr_backend: str | None = None
+    """Which ASR backend recognises this language, or None for the configured
+    default. Set per language because no single recogniser covers them all:
+    Whisper has no Bodo, IndicConformer has no Sylheti."""
+
     @property
     def label(self) -> str:
         """Human-facing label for dropdowns."""
@@ -120,20 +125,22 @@ LANGUAGES: dict[str, Language] = {
         iso="brx",
         script="Deva",
         script_name="Devanagari",
-        # Whisper has no Bodo. Assamese is the least-bad regional stand-in,
-        # and it at least shares the Brahmaputra valley's loan vocabulary.
-        asr_code="as",
-        asr_native=False,
+        # Whisper has no Bodo at any model size, so this runs on AI4Bharat's
+        # IndicConformer instead -- genuinely trained on Bodo, not a regional
+        # stand-in. Before this it was recognised as Assamese and transcripts
+        # were fiction.
+        asr_code="brx",
+        asr_native=True,
+        asr_backend="indic-conformer",
         # OmniVoice DOES have Bodo natively (brx is in LANG_IDS), so the
-        # speaking half of the pipeline is genuine even though the listening
-        # half is a stand-in.
+        # speaking half of the pipeline is genuine too.
         tts_code="brx",
         tts_native=True,
         priority=2,
         notes=(
-            "Bodo is written in DEVANAGARI, not Bengali script. Whisper has no "
-            "Bodo code, so ASR falls back to Assamese and transcripts will be "
-            "poor; fixed by the indic-conformer swap. TTS is native."
+            "Bodo is written in DEVANAGARI, not Bengali script. Both halves are "
+            "now native: ASR via IndicConformer (ONNX), TTS via OmniVoice. "
+            "Whisper is not involved and cannot be -- it has no Bodo code."
         ),
     ),
     "syl": Language(
@@ -223,6 +230,15 @@ def enabled() -> list[Language]:
 def choices() -> list[tuple[str, str]]:
     """(label, code) pairs for a Gradio dropdown."""
     return [(lang.label, lang.code) for lang in enabled()]
+
+
+def asr_backend_for(code: str) -> str | None:
+    """Which ASR backend this language needs, or None for the configured default.
+
+    Returning None rather than reading settings keeps this module free of the
+    config import; models.py resolves the default.
+    """
+    return get(code).asr_backend
 
 
 def asr_code_for(code: str) -> str:

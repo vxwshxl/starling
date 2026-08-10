@@ -71,8 +71,9 @@ These are not preferences. Breaking one causes subtle, hard-to-trace bugs.
 5. **Every pipeline stage logs its own wall-clock duration** via
    `timing.Timings.stage()`. Every pipeline function returns
    `(result, timings)`.
-6. **Torch device is `mps`.** This is an M4 MacBook Air. There is no CUDA.
-   Prefer Apple-native (MLX / Core ML) where an option exists.
+6. **Prefer Apple-native (MLX / Core ML / ONNX).** This is an M4 MacBook Air;
+   there is no CUDA. But **torch MPS is not safe for OmniVoice** — see below.
+   Run the API with `STARLING_DEVICE=cpu`.
 
 ## Hardware and constraints
 
@@ -89,16 +90,28 @@ That budget is the binding constraint:
   model with `load_asr=False`.
 - OmniVoice's audio tokenizer does not support MPS (output channels > 65536)
   and silently falls back to CPU. Expect TTS to be partly CPU-bound.
+- **torch MPS is broken for OmniVoice on torch 2.13.0. Measured, twice:**
+  - `device_map="mps", dtype=float16` — **SIGSEGV** while loading weights, in
+    `copy_cast_kernel_mps` → `MetalShaderLibrary::exec_unary_kernel`. Confirmed
+    from the macOS crash report (`EXC_BAD_ACCESS` at `0x0`), not inferred from
+    an exit code. It is *not* an out-of-memory kill.
+  - `device_map="mps", dtype=float32` — loads and runs, then emits
+    **near-silence**: 0.40 s of audio at peak 0.019, versus CPU's 1.73 s at
+    peak 0.278 for the same text. This is the dangerous one: no crash, no
+    error, just a silent WAV.
+  - `device_map="cpu"` (either dtype) produces real speech. **Use CPU.**
+  - So: verify TTS output by measuring RMS/peak, never by checking that the
+    call returned. A green exit code here means nothing.
 
 ## Language support
 
 Verified against the installed packages, not assumed:
 
-| Language | ISO | Script | ASR (Whisper) | TTS (OmniVoice) |
+| Language | ISO | Script | ASR | TTS (OmniVoice) |
 |---|---|---|---|---|
-| Assamese | `as` | Bengali-Assamese | `as` native | `as` native |
-| Bodo | `brx` | **Devanagari** | `as` **FALLBACK** | `brx` native |
-| Sylheti / Barak Bengali | `bn` | Bengali-Assamese | `bn` native | `bn` **FALLBACK** |
+| Assamese | `as` | Bengali-Assamese | `as` native — Whisper | `as` native |
+| Bodo | `brx` | **Devanagari** | `brx` native — IndicConformer | `brx` native |
+| Sylheti / Barak Bengali | `bn` | Bengali-Assamese | `bn` native — Whisper | `bn` **FALLBACK** |
 | Khasi | `kha` | Latin | none | none — *disabled* |
 | Mizo | `lus` | Latin | none | `lus` native — *disabled* |
 
@@ -106,12 +119,16 @@ The key asymmetry: **ASR and TTS do not cover the same languages**, so every
 language carries a separate code *and* a separate "is this real?" flag for each
 stage. Whisper knows 100 languages; OmniVoice knows 646.
 
+**There is no longer one recogniser.** Whisper has no Bodo at any model size,
+so `Language.asr_backend` names a backend per language and `models.get_asr()`
+routes on it. Both backends can be resident at once.
+
 - **Bodo is written in Devanagari, not Bengali script.** Do not assume otherwise.
-- Whisper has no Bodo, so ASR falls back to Assamese and transcripts will be
-  poor. This is flagged loudly in the UI. The fix is the phase-2 swap to
-  `ai4bharat/indic-conformer-600m-multilingual`, which covers Assamese and Bodo
-  properly — implement it as a new class in `asr_backends.py` and flip
-  `asr_native` to `True`. Nothing else changes.
+- Bodo ASR runs on **AI4Bharat IndicConformer via ONNX Runtime**, not Whisper.
+  Use the `OpenVoiceOS/ai4bharat-indicconformer-*-onnx` exports: the upstream
+  `ai4bharat/*` repos are **gated** behind a terms click, these carry the same
+  weights (see each card's `base_model`) and are MIT. One repo per language,
+  ~590 MB each; `as` and `bn` exports exist too if Whisper is ever dropped.
 - Khasi is unreachable today. If a hill language is needed for the demo, **use
   Mizo** — OmniVoice can at least speak it.
 
@@ -125,7 +142,9 @@ services/asr/           Python 3.11, FastAPI, managed with uv (NOT pip/conda).
     config.py           env -> settings. The only module reading os.environ.
     languages.py        THE LANGUAGES config. Single source of truth.
     audio.py            to_wav_16k() via ffmpeg subprocess
-    asr_backends.py     ASRBackend protocol + MLXWhisperBackend. Swap point.
+    asr_backends.py     ASRBackend protocol, MLXWhisperBackend (as, bn) and
+                        IndicConformerBackend (brx, ONNX). Per-language routing
+                        lives in models.get_asr().
     models.py           lazy singleton loaders, unload_all()
     timing.py           Timings.stage() context manager
     pipeline.py         transcribe(), synthesize(), roundtrip()
@@ -146,6 +165,10 @@ services/asr/           Python 3.11, FastAPI, managed with uv (NOT pip/conda).
     guidance_scale=, speed=) -> list[np.ndarray]`, and `model.sampling_rate`.
   - Confirmed real API, `mlx-whisper` 0.4.3:
     `mlx_whisper.transcribe(audio, *, path_or_hf_repo=..., language=..., ...)`.
+  - Confirmed real API, `onnx-asr` 0.12.0:
+    `onnx_asr.load_model(repo) -> TextResultsAsrAdapter`, then
+    `adapter.recognize(path_or_ndarray, *, sample_rate=16000) -> str`.
+    onnxruntime picks CoreML on Apple Silicon by itself.
 - **Never download model weights during setup.** They download on first real
   use. Warn that it takes a while.
 - Ask before installing anything heavy or not already listed.

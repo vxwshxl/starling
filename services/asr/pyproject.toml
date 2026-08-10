@@ -18,6 +18,8 @@ dependencies = [
     # --- Audio I/O ---
     "soundfile>=0.12",
     "numpy>=1.26",
+    "onnx-asr>=0.12.0",
+    "onnxruntime>=1.28.0",
 ]
 
 [build-system]
