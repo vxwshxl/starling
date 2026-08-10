@@ -1,5 +1,6 @@
 import { Bird } from "lucide-react";
 
+import { LanguageCoverageCard } from "@/components/language-coverage-card";
 import { ModeToggle } from "@/components/mode-toggle";
 import { ServiceStatusCard } from "@/components/service-status-card";
 
@@ -25,6 +26,7 @@ export default function Home() {
 
       <main className="flex flex-col gap-8">
         <ServiceStatusCard />
+        <LanguageCoverageCard />
       </main>
 
       <footer className="mt-auto pt-4 text-xs text-muted-foreground">
