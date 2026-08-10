@@ -160,6 +160,72 @@
   --warning-foreground: oklch(0.22 0.03 80);
 }
 
+@theme inline {
+  --font-display: var(--font-display);
+  --font-mono: var(--font-mono);
+}
+
+/* Atmosphere. Two very wide, very faint accent washes anchored off the top
+   corners, so the page has a light source instead of being a flat slab. */
+body {
+  background-image:
+    radial-gradient(
+      70rem 45rem at 12% -15%,
+      color-mix(in oklch, var(--primary) 14%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      55rem 38rem at 92% -5%,
+      color-mix(in oklch, var(--primary) 8%, transparent),
+      transparent 65%
+    );
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+/* Staggered entrance. `backwards` holds the from-state during the delay,
+   otherwise every tile flashes at full opacity before its turn. */
+@keyframes starling-rise {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.tile-rise {
+  animation: starling-rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+/* The lab tile's level meter: bars scaled on a loop, each offset by its own
+   delay so the group reads as speech rather than a metronome. */
+@keyframes starling-level {
+  0%,
+  100% {
+    transform: scaleY(0.28);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.level-bar {
+  transform-origin: center;
+  animation: starling-level 1.1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile-rise,
+  .level-bar,
+  .animate-ping,
+  .animate-spin {
+    animation: none !important;
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

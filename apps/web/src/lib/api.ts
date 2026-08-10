@@ -8,6 +8,15 @@
 export const API_BASE =
   process.env.NEXT_PUBLIC_STARLING_API ?? "http://127.0.0.1:8000";
 
+/**
+ * The Gradio lab. Not part of this app -- a separate process started with
+ * `pnpm lab` -- so it is only ever linked to, never fetched. Its liveness
+ * cannot be probed from here: Gradio does not send CORS headers for this
+ * origin, so a fetch would fail even when the lab is running fine.
+ */
+export const LAB_URL =
+  process.env.NEXT_PUBLIC_STARLING_LAB ?? "http://127.0.0.1:7860";
+
 /** GET /health -- cheap liveness probe. Never loads a model. */
 export type Health = {
   status: string;
