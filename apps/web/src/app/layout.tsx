@@ -25,7 +25,10 @@ export default function RootLayout({
       // server render cannot predict. Required, not a papered-over bug.
       suppressHydrationWarning
     >
-      <body className="antialiased">
+      {/* suppressHydrationWarning does not inherit, so <body> needs its own.
+          Browser extensions inject attributes here (bis_register and friends)
+          before React hydrates, which is not something the app can prevent. */}
+      <body className="antialiased" suppressHydrationWarning>
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

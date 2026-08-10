@@ -17,12 +17,21 @@ export function ModeToggle() {
 
   const isDark = resolvedTheme === "dark";
 
+  // The label has to be gated on `mounted` for the same reason the icon is:
+  // the server has no theme to resolve, so anything derived from it differs
+  // between the two renders and React reports a hydration mismatch.
+  const label = !mounted
+    ? "Toggle theme"
+    : isDark
+      ? "Switch to light theme"
+      : "Switch to dark theme";
+
   return (
     <Button
       variant="ghost"
       size="icon"
       onClick={() => setTheme(isDark ? "light" : "dark")}
-      aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
+      aria-label={label}
     >
       {mounted ? (
         isDark ? (
