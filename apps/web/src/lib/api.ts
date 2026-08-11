@@ -75,6 +75,113 @@ export function unloadModel(target: ModelTarget | "all") {
   );
 }
 
+/** A passage the answer was built from. Empty list means the answer was refused. */
+export type Source = {
+  id: string;
+  title: string;
+  sector: string;
+  score: number;
+};
+
+export type ChatResult = {
+  text: string;
+  /** False when nothing matched and a fixed refusal was returned. */
+  grounded: boolean;
+  language: string;
+  warnings: string[];
+  sources: Source[];
+};
+
+export type Timings = Record<string, number>;
+
+/** POST /chat -- retrieval-grounded answer from the offline knowledge base. */
+export async function askChat(
+  question: string,
+  language: string,
+  signal?: AbortSignal,
+): Promise<{ result: ChatResult; timings: Timings }> {
+  const form = new FormData();
+  form.set("question", question);
+  form.set("language", language);
+  const res = await fetch(`${API_BASE}/chat`, {
+    method: "POST",
+    body: form,
+    cache: "no-store",
+    signal,
+  });
+  if (!res.ok) throw new Error(await errorDetail(res));
+  return res.json();
+}
+
+/** POST /asr -- transcribe a recording in the given language. */
+export async function transcribe(
+  audio: Blob,
+  language: string,
+  signal?: AbortSignal,
+): Promise<{ result: { text: string; warnings: string[] }; timings: Timings }> {
+  const form = new FormData();
+  // The service normalises whatever it is handed to 16 kHz mono WAV, so the
+  // browser's native recording format is fine to send as-is.
+  form.set("audio", audio, "recording.webm");
+  form.set("language", language);
+  const res = await fetch(`${API_BASE}/asr`, {
+    method: "POST",
+    body: form,
+    cache: "no-store",
+    signal,
+  });
+  if (!res.ok) throw new Error(await errorDetail(res));
+  return res.json();
+}
+
+/**
+ * POST /tts -- returns a playable URL for the generated WAV.
+ *
+ * The service replies with `audio_path`, a path on its own filesystem, and
+ * serves the file separately from GET /audio/{name}. So the basename is the
+ * handle, not the path.
+ */
+export async function synthesize(
+  text: string,
+  language: string,
+  signal?: AbortSignal,
+): Promise<{ url: string; sampleRate: number; warnings: string[] }> {
+  const form = new FormData();
+  form.set("text", text);
+  form.set("language", language);
+  const res = await fetch(`${API_BASE}/tts`, {
+    method: "POST",
+    body: form,
+    cache: "no-store",
+    signal,
+  });
+  if (!res.ok) throw new Error(await errorDetail(res));
+  const data = (await res.json()) as {
+    result: {
+      audio_path: string;
+      sample_rate: number;
+      warnings: string[];
+    };
+  };
+  const name = data.result.audio_path.split("/").pop();
+  if (!name) throw new Error("Synthesis returned no audio file");
+  return {
+    url: `${API_BASE}/audio/${encodeURIComponent(name)}`,
+    sampleRate: data.result.sample_rate,
+    warnings: data.result.warnings ?? [],
+  };
+}
+
+async function errorDetail(res: Response): Promise<string> {
+  try {
+    const j = (await res.json()) as { detail?: string };
+    if (j.detail) return j.detail;
+  } catch {
+    /* non-JSON body; fall through to the status */
+  }
+  return `HTTP ${res.status}`;
+}
+
 /** One entry from GET /languages. */
 export type LanguageInfo = {
   code: string;
