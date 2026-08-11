@@ -319,7 +319,8 @@ guard exists because prompting was tried first and measured to fail:
 | `type` into an Aadhaar/OTP/captcha/PAN field → converted to `ask` | The value must never exist in a model's output. A hallucinated 12-digit number must be unable to reach UIDAI. The panel collects it and types it directly. |
 | Sensitive click → confirmation | `SENSITIVE` is a regex, not substrings: "place order" missed Amazon's actual **"Place your order"**, i.e. the one button it existed for. |
 | `type` + Enter into a message box → confirmation quoting the text | WhatsApp sends on Enter, not on a click. Gating only the Send button let a message go out unapproved. |
-| Known task + wrong host → deterministic navigate, no model call | On a blank tab the model produced no valid action at all; and a *guessed* government URL is how somebody types their Aadhaar into a lookalike. `tasks.py` owns the URL and a dot-boundary host allow-list. |
+| Instruction names another site → navigate there first, no model call | Told to buy shoes "from amazon.in" while sitting on UIDAI, the agent tried to buy shoes on UIDAI. `destinationFor()` in panel.js is one rule for both a named domain and a `tasks.py` recipe — never a special case per site. A *guessed* government URL is how somebody types their Aadhaar into a lookalike, so the destination is never generated. |
+| Naming the site you are already on → do nothing | Dot-boundary suffix match. Without it every follow-up turn reloads the page and discards the state the previous turns built; with the boundary, a lookalike host is *not* "already the right site" and it navigates away to the real one. |
 
 `agent.redact()` and its twin in `panel.js` strip identifier-shaped digit runs
 from logs and from the chat history on both sides.
@@ -402,6 +403,11 @@ services/asr/           Python 3.11, FastAPI, managed with uv (NOT pip/conda).
     page.py             whole-page translation: filter, cache, dedupe, batch
     agent.py            the browsing agent's brain. One action per call; the
                         loop lives in the extension, which can see the DOM.
+                        Also answer_page(), the no-action prompt behind
+                        POST /page/ask, and every structural guard above.
+    tasks.py            recipes for known flows (Aadhaar, PM-KISAN, WhatsApp):
+                        entry URL, steps, and the host allow-list that stops
+                        an identifier being typed into a lookalike domain.
     chat.py             orchestrates the middle of the cascade
     pipeline.py         transcribe(), synthesize(), roundtrip()
     main.py             FastAPI app

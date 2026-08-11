@@ -28,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from . import agent, chat, languages, models, page, pipeline, translate
+from . import agent, chat, languages, models, page, pipeline, tasks, translate
 from .config import settings
 from .translate_cache import cache as translation_cache
 
@@ -320,6 +320,28 @@ def clear_translation_cache() -> dict[str, Any]:
     """Forget every cached segment. The cache holds text from pages the user
     browsed, so this is offered in the extension's UI, not just here."""
     return {"cleared": translation_cache.clear()}
+
+
+@app.get("/tasks")
+def list_tasks() -> dict[str, Any]:
+    """The known-task recipes, for the extension's client-side matcher.
+
+    Exposed so the panel can recognise "download my aadhaar" without a model
+    call. That matters most on pages Chrome forbids extensions from scripting
+    -- the new tab page, chrome:// -- where there is no page to read and the
+    only useful thing to do is navigate somewhere there is one.
+    """
+    return {
+        "tasks": [
+            {
+                "name": task.name,
+                "url": task.url,
+                "keywords": list(task.keywords),
+                "needs": list(task.needs),
+            }
+            for task in tasks.TASKS
+        ]
+    }
 
 
 class PageQuestion(BaseModel):

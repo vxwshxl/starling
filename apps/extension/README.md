@@ -173,21 +173,34 @@ you visit. So the content scripts do DOM work only and the panel does all
 network work. The panel is also the only context that reliably stays alive for
 the length of an agent run — see the comment at the top of `background.js`.
 
-## Known tasks
+## Going to the right site first
 
-Some things people come here to do have a fixed entry point and a known
-shape, and a 3B model knows neither. `services/asr/starling/tasks.py` holds
-recipes for them — Aadhaar download, Aadhaar/bank seeding status, PM-KISAN
-status, ration card portals, WhatsApp messages. Say *"download my aadhaar"* in
-any of the six languages and it goes straight to the real UIDAI page.
+If an instruction is about somewhere other than where you are, the panel goes
+there before it starts work. One rule, not a special case per site:
 
-**That routing does not involve the model.** When a recipe matches and you are
-not already on one of its permitted hosts, the extension navigates to the URL
-written in `tasks.py` — no generation, no guess. This is deliberate: a guessed
-government URL is exactly how somebody ends up typing their Aadhaar number
-into a lookalike site. Each recipe carries a host allow-list, suffix-matched
-on a dot boundary, so `uidai.gov.in` covers `myaadhaar.uidai.gov.in` and never
-`uidai.gov.in.phish.example`.
+- **A site named in the message.** *"buy me a formal shoe under 1000 from
+  amazon.in"* names where the work happens as clearly as *"go to amazon.in"*
+  does. Both navigate. This is the general case and nothing about it is
+  per-site.
+- **A known task**, for the flows that name no URL at all. *"download my
+  aadhaar"* has to get its destination from somewhere, and
+  `services/asr/starling/tasks.py` holds it — Aadhaar download, Aadhaar/bank
+  seeding, PM-KISAN, ration card portals, WhatsApp.
+
+Neither costs a model call, and the destination is never generated. That is
+deliberate for the government flows especially: a *guessed* URL is exactly how
+somebody ends up typing their Aadhaar number into a lookalike site.
+
+**Naming a site you are already on does nothing**, which is what keeps a
+multi-turn task on one page — *"now add it to the cart"* names nothing, and
+*"buy shoes from amazon.in"* while already on Amazon must not reload and throw
+away the last three turns. The comparison is a dot-boundary suffix match, so
+`uidai.gov.in` covers `myaadhaar.uidai.gov.in` and never
+`uidai.gov.in.phish.example` — on a lookalike domain it navigates *away*, to
+the real one.
+
+Instructions that name no site stay put: *"open the contact page"* is the
+agent's job, not a URL.
 
 ### How the Aadhaar flow actually runs
 
@@ -267,5 +280,16 @@ against the extension's origin rather than the page that requested it.
 - **Indic → Indic is refused,** not pivoted. Sarvam-Translate's open checkpoint
   is English↔Indic only. The panel disables the button and says so.
 - **No streaming.** A chunk appears when the whole chunk is done.
-- **`chrome://`, the Web Store and PDFs** cannot be scripted by any extension.
-  The panel names that rather than failing obscurely.
+- **`chrome://`, the new tab page, the Web Store and PDFs** cannot be scripted
+  by any extension. That restriction is real and there is no way around it —
+  but the panel is not dead there, which is what matters, since the new tab
+  page is exactly where you start something from. On such a page it falls back
+  to what does not need the DOM:
+  - a known task (*"download my aadhaar"*) → navigates to the official page,
+    then carries on normally;
+  - *"go to amazon.in"* or a pasted URL → navigates, then carries on;
+  - anything else → answered through `POST /chat`, Starling's own
+    retrieval-and-generate path, which needs no page at all.
+
+  Only *translating this page* and *questions about this page* are genuinely
+  impossible there, and those say so instead of pretending.

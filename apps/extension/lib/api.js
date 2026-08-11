@@ -111,6 +111,30 @@ export function createClient(base = DEFAULT_BASE) {
     /** A long answer about the page, with no action considered. */
     ask: (payload) => request(base, "/page/ask", { method: "POST", body: payload }),
 
+    /** The known-task recipes, so the panel can match them without a model. */
+    tasks: () => request(base, "/tasks", { timeoutMs: 8000 }),
+
+    /** Starling's own answering path, for when there is no page to read.
+     *
+     *  Reuses POST /chat -- the same retrieval-and-generate cascade the web
+     *  app uses, with small talk and both translation legs already handled.
+     *  On a page Chrome forbids scripting, this is the only thing that can
+     *  answer at all, and it answers rather well. */
+    async chat(question, language) {
+      const form = new URLSearchParams({ question, language });
+      const response = await fetch(`${base}/chat`, { method: "POST", body: form });
+      if (!response.ok) {
+        let detail = `${response.status} ${response.statusText}`;
+        try {
+          detail = (await response.json()).detail || detail;
+        } catch {
+          /* keep the status */
+        }
+        throw new ApiError(detail, { status: response.status });
+      }
+      return response.json();
+    },
+
     /** Text -> speech, via OmniVoice. Multipart, not JSON.
      *
      *  No reference audio is sent, so this is OmniVoice's default voice

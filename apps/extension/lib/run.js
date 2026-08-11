@@ -150,6 +150,112 @@ export function detectTranslateIntent(text, languages) {
   return { target: named ? named.code : null };
 }
 
+/** Match a goal against the known-task recipes, client-side.
+ *
+ *  Mirrors tasks.match() on the service, over the list fetched from /tasks so
+ *  the keywords are not duplicated. Client-side because the place this
+ *  matters most is a page Chrome will not let us script -- the new tab page
+ *  -- where there is nothing to read, and paying a model call just to work
+ *  out that "download my aadhaar" means going to UIDAI would be silly.
+ *
+ *  Token containment, not a contiguous phrase: "download my aadhaar card"
+ *  has to match the keyword "download aadhaar".
+ */
+export function matchTask(text, taskList) {
+  const words = new Set(
+    text.toLowerCase().replace(/[^a-z0-9\s]+/g, " ").split(/\s+/).filter(Boolean),
+  );
+  let best = null;
+  for (const task of taskList || []) {
+    for (const keyword of task.keywords) {
+      const tokens = keyword.split(" ");
+      if (tokens.every((t) => words.has(t))) {
+        const score = tokens.length * 100 + keyword.length;
+        if (!best || score > best.score) best = { score, task };
+      }
+    }
+  }
+  return best?.task ?? null;
+}
+
+/** Any site named anywhere in the message.
+ *
+ *  This is the general form of what the task recipes do for a handful of
+ *  known flows, and it is the part that must NOT be hardcoded. "buy me a
+ *  formal shoe under 1000 from amazon.in" names where the work happens just
+ *  as clearly as "go to amazon.in" does; an earlier version only recognised
+ *  the second, so the agent obediently tried to buy shoes on the UIDAI page
+ *  it happened to be sitting on.
+ *
+ *  Recognising the site is only half of it -- see `sameSite` below. Naming a
+ *  site you are already on must NOT trigger a navigation, or every follow-up
+ *  turn reloads the page and throws away the progress made on it.
+ *
+ *  An explicit TLD list rather than `[a-z]{2,}`, because the loose form
+ *  matches things like "e.g" and any "word.word" in ordinary prose, and a
+ *  spurious navigation is far more destructive than a missed one.
+ */
+const TLDS =
+  "com|in|org|net|gov|edu|io|co|ai|app|dev|me|info|biz|shop|store|news|xyz|" +
+  "uk|us|au|ca|de|fr|jp|cn|sg|ae";
+const DOMAIN = new RegExp(
+  String.raw`\b((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:${TLDS})(?:\.[a-z]{2})?)\b(\/\S*)?`,
+  "i",
+);
+
+/** "go to example.com" — an explicit instruction, with or without a TLD we know. */
+const EXPLICIT = /^(?:go to|open|visit|navigate to|take me to|launch)\s+(\S+)/i;
+
+export function detectNavigation(text) {
+  const clean = text.trim();
+  const explicit = EXPLICIT.exec(clean);
+  if (explicit) {
+    const raw = explicit[1].replace(/[.,;:!?]+$/, "");
+    if (/^https?:\/\//i.test(raw)) return { url: raw, host: hostOf(raw) };
+    if (DOMAIN.test(raw)) return { url: `https://${raw}`, host: hostOf(`https://${raw}`) };
+    return null; // "go to the contact page" is a job for the agent, not a URL
+  }
+  if (/^https?:\/\/\S+$/i.test(clean)) return { url: clean, host: hostOf(clean) };
+
+  // A site named inside a longer instruction.
+  const match = DOMAIN.exec(clean);
+  if (!match) return null;
+  const url = `https://${match[1]}${match[2] || ""}`;
+  return { url, host: hostOf(url) };
+}
+
+export function hostOf(url) {
+  try {
+    return new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+/** Whether two URLs are the same site, on a dot boundary.
+ *
+ *  The boundary matters for more than tidiness: without it `uidai.gov.in`
+ *  would count `uidai.gov.in.phish.example` as the same site and skip the
+ *  navigation that would have taken the user off it.
+ */
+export function sameSite(a, b) {
+  const x = hostOf(a);
+  const y = hostOf(b);
+  if (!x || !y) return false;
+  return x === y || x.endsWith(`.${y}`) || y.endsWith(`.${x}`);
+}
+
+/** Send a tab somewhere, without needing to script the page it is on.
+ *
+ *  `chrome.tabs.update` needs only the "tabs" permission, so this works from
+ *  the new tab page and from chrome:// pages where injection is refused --
+ *  which is exactly when it is needed. */
+export async function goTo(tabId, url) {
+  await chrome.tabs.update(tabId, { url });
+  await waitForLoad(tabId);
+  return url;
+}
+
 /** Type a value into one field, without the model ever seeing it.
  *
  *  Used for the identifiers the service refuses to let the model produce --
