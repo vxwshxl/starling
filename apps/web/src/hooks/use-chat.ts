@@ -7,6 +7,7 @@ import {
   describeError,
   synthesize,
   transcribe,
+  type ChatKind,
   type Source,
   type Timings,
 } from "@/lib/api";
@@ -18,8 +19,10 @@ export type Message = {
   /** True while the assistant reply is still being generated. */
   pending?: boolean;
   sources?: Source[];
-  /** False when the knowledge base did not cover the question. */
+  /** False when the text did not come from retrieved passages. */
   grounded?: boolean;
+  /** Distinguishes a refusal from a greeting; both are ungrounded. */
+  kind?: ChatKind;
   warnings?: string[];
   timings?: Timings;
   error?: string;
@@ -39,10 +42,13 @@ export function useChat(language: string) {
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recorderError, setRecorderError] = useState<string | null>(null);
+  /** Live spectrum of the microphone, for the composer's equaliser. */
+  const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
 
   const inFlight = useRef<AbortController | null>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
+  const audioCtx = useRef<AudioContext | null>(null);
 
   const patch = useCallback((id: string, next: Partial<Message>) => {
     setMessages((ms) => ms.map((m) => (m.id === id ? { ...m, ...next } : m)));
@@ -78,6 +84,7 @@ export function useChat(language: string) {
           pending: false,
           sources: result.sources,
           grounded: result.grounded,
+          kind: result.kind,
           warnings: result.warnings,
           timings,
         });
@@ -108,10 +115,20 @@ export function useChat(language: string) {
     [language, patch],
   );
 
+  /** Drop the spectrum tap. Safe to call twice. */
+  const closeAnalyser = useCallback(() => {
+    setAnalyser(null);
+    void audioCtx.current?.close().catch(() => {
+      /* already closed */
+    });
+    audioCtx.current = null;
+  }, []);
+
   const stopRecording = useCallback(() => {
     recorder.current?.stop();
     setRecording(false);
-  }, []);
+    closeAnalyser();
+  }, [closeAnalyser]);
 
   const startRecording = useCallback(async () => {
     setRecorderError(null);
@@ -123,6 +140,23 @@ export function useChat(language: string) {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mr = new MediaRecorder(stream);
       chunks.current = [];
+
+      // Tap the same stream the recorder is using, so the bars show what is
+      // actually being captured rather than a second, separately-gained take
+      // of the microphone. fftSize 512 gives 256 bins -- ample for 32 bars,
+      // and cheap enough to run every frame on a fanless machine.
+      try {
+        const ctx = new AudioContext();
+        const node = ctx.createAnalyser();
+        node.fftSize = 512;
+        node.smoothingTimeConstant = 0.6;
+        ctx.createMediaStreamSource(stream).connect(node);
+        audioCtx.current = ctx;
+        setAnalyser(node);
+      } catch {
+        // Visualisation is a nicety. If WebAudio refuses, still record.
+      }
+
       mr.ondataavailable = (e) => {
         if (e.data.size > 0) chunks.current.push(e.data);
       };
@@ -130,6 +164,7 @@ export function useChat(language: string) {
         // Release the mic immediately; leaving it open keeps the browser's
         // recording indicator lit and looks like the app is still listening.
         stream.getTracks().forEach((t) => t.stop());
+        closeAnalyser();
         const blob = new Blob(chunks.current, { type: mr.mimeType });
         if (blob.size === 0) return;
         setBusy(true);
@@ -151,17 +186,31 @@ export function useChat(language: string) {
       mr.start();
       setRecording(true);
     } catch (err) {
+      closeAnalyser();
       setRecorderError(
         err instanceof DOMException && err.name === "NotAllowedError"
           ? "Microphone permission was denied."
           : describeError(err),
       );
     }
-  }, [language, send]);
+  }, [language, send, closeAnalyser]);
 
   const reset = useCallback(() => {
     inFlight.current?.abort();
     setMessages([]);
+    setBusy(false);
+    setRecorderError(null);
+  }, []);
+
+  /** Swap in a stored conversation, discarding whatever is on screen. */
+  const restore = useCallback((next: Message[]) => {
+    inFlight.current?.abort();
+    // Nothing in a restored thread is still in flight, so any `pending` or
+    // `speaking` flag saved mid-request would otherwise come back as a
+    // spinner that never resolves.
+    setMessages(
+      next.map((m) => ({ ...m, pending: false, speaking: false })),
+    );
     setBusy(false);
     setRecorderError(null);
   }, []);
@@ -171,10 +220,12 @@ export function useChat(language: string) {
     busy,
     recording,
     recorderError,
+    analyser,
     send,
     speak,
     startRecording,
     stopRecording,
     reset,
+    restore,
   };
 }

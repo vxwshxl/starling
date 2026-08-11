@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
   describeError,
@@ -13,30 +13,53 @@ export type LanguagesState =
   | { phase: "ready"; data: LanguagesResponse }
   | { phase: "error"; error: string };
 
+export type UseLanguages = LanguagesState & { retry: () => void };
+
 /**
- * Fetches /languages once.
+ * Fetches /languages, retrying on failure.
  *
  * Unlike /health this is not polled: it serves a frozen config dict that only
  * changes when languages.py changes, which means a service restart anyway.
+ * But the first attempt lands while the page is loading, which is exactly
+ * when a model may be mid-generation and starving the handler, so a single
+ * shot that fails would strand the whole sidebar. Hence `retry`, and one
+ * automatic attempt behind it.
  */
-export function useLanguages(): LanguagesState {
+export function useLanguages(): UseLanguages {
   const [state, setState] = useState<LanguagesState>({ phase: "loading" });
+  const [attempt, setAttempt] = useState(0);
+
+  const retry = useCallback(() => {
+    setState({ phase: "loading" });
+    setAttempt((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    getLanguages(controller.signal)
-      .then((data) => {
-        if (!controller.signal.aborted) setState({ phase: "ready", data });
-      })
-      .catch((err: unknown) => {
-        if (!controller.signal.aborted) {
+    const run = (retriesLeft: number) => {
+      getLanguages(controller.signal)
+        .then((data) => {
+          if (!controller.signal.aborted) setState({ phase: "ready", data });
+        })
+        .catch((err: unknown) => {
+          if (controller.signal.aborted) return;
+          if (retriesLeft > 0) {
+            timer = setTimeout(() => run(retriesLeft - 1), 2000);
+            return;
+          }
           setState({ phase: "error", error: describeError(err) });
-        }
-      });
+        });
+    };
 
-    return () => controller.abort();
-  }, []);
+    run(1);
 
-  return state;
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [attempt]);
+
+  return { ...state, retry };
 }

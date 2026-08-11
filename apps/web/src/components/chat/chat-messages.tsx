@@ -75,9 +75,14 @@ function Sources({ sources }: { sources: NonNullable<Message["sources"]> }) {
 function Bubble({
   message,
   onSpeak,
+  onPickSuggestion,
+  showWarnings,
 }: {
   message: Message;
   onSpeak: (id: string, text: string) => void;
+  onPickSuggestion: (q: string) => void;
+  /** Warnings already shown earlier in the thread are suppressed here. */
+  showWarnings: string[];
 }) {
   const isUser = message.role === "user";
 
@@ -121,16 +126,31 @@ function Bubble({
               {message.text}
             </p>
 
-            {message.grounded === false && (
-              <p className="text-xs text-muted-foreground">
-                Not covered by the knowledge base — answered with a fixed
-                response rather than a guess.
-              </p>
+            {/* A greeting is ungrounded too, and labelling it "not covered"
+                would be both true and absurd. Only a refusal gets the note. */}
+            {message.kind === "refusal" && (
+              <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
+                <p className="text-xs text-muted-foreground">
+                  Not covered by the knowledge base — answered with a fixed
+                  response rather than a guess. Try one of these:
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {SUGGESTIONS.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => onPickSuggestion(s)}
+                      className="rounded-full border border-border px-2.5 py-1 text-xs transition-colors hover:bg-muted"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
 
             {message.sources && <Sources sources={message.sources} />}
 
-            {message.warnings?.map((w) => (
+            {showWarnings.map((w) => (
               <Alert key={w} variant="warning">
                 <AlertTriangle />
                 <AlertDescription>{w}</AlertDescription>
@@ -151,11 +171,15 @@ function Bubble({
                 )}
                 {message.speaking ? "Synthesising…" : "Speak"}
               </Button>
-              {message.timings?.total_ms != null && (
-                <span className="font-mono text-xs text-muted-foreground">
-                  {Math.round(message.timings.total_ms)} ms
-                </span>
-              )}
+              {/* A refusal costs a fraction of a millisecond, and "0 ms" next
+                  to an answer reads as a stopwatch that failed rather than as
+                  work that never happened. */}
+              {message.timings?.total_ms != null &&
+                message.timings.total_ms >= 1 && (
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {Math.round(message.timings.total_ms)} ms
+                  </span>
+                )}
             </div>
 
             {message.audioUrl && (
@@ -188,11 +212,26 @@ export function ChatMessages({
     return <Empty onPick={onPickSuggestion} />;
   }
 
+  // The translation caveat is a property of the language, not of the reply, so
+  // every single answer carries it. Shown on all of them it becomes wallpaper
+  // and stops being read; shown on its first appearance it is still a warning.
+  const seen = new Set<string>();
+
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-6 sm:px-6">
-      {messages.map((m) => (
-        <Bubble key={m.id} message={m} onSpeak={onSpeak} />
-      ))}
+      {messages.map((m) => {
+        const fresh = (m.warnings ?? []).filter((w) => !seen.has(w));
+        fresh.forEach((w) => seen.add(w));
+        return (
+          <Bubble
+            key={m.id}
+            message={m}
+            onSpeak={onSpeak}
+            onPickSuggestion={onPickSuggestion}
+            showWarnings={fresh}
+          />
+        );
+      })}
       <div ref={endRef} />
     </div>
   );

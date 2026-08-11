@@ -1,16 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { Activity, Bird, MessageSquarePlus, WifiOff } from "lucide-react";
+import {
+  Activity,
+  Bird,
+  MessageSquarePlus,
+  RotateCw,
+  Trash2,
+  WifiOff,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import type { Message } from "@/hooks/use-chat";
 import type { LanguageInfo } from "@/lib/api";
 import { coverageOf } from "@/lib/coverage";
 import { cn } from "@/lib/utils";
 
-export type Thread = { id: string; title: string; at: number };
+export type Thread = {
+  id: string;
+  title: string;
+  at: number;
+  messages: Message[];
+};
 
 /** Sectors the knowledge base actually covers, matching knowledge.py. */
 const SECTORS = [
@@ -24,9 +38,13 @@ export function ChatSidebar({
   languages,
   language,
   onLanguageChange,
+  languagesPending,
+  languagesError,
+  onRetryLanguages,
   threads,
   activeThread,
   onSelectThread,
+  onDeleteThread,
   onNewChat,
   onNavigate,
   className,
@@ -34,9 +52,14 @@ export function ChatSidebar({
   languages: LanguageInfo[];
   language: string;
   onLanguageChange: (code: string) => void;
+  /** True while /languages is still in flight. */
+  languagesPending: boolean;
+  languagesError: string | null;
+  onRetryLanguages: () => void;
   threads: Thread[];
   activeThread: string | null;
   onSelectThread: (id: string) => void;
+  onDeleteThread: (id: string) => void;
   onNewChat: () => void;
   /** Called after any action that should dismiss the mobile drawer. */
   onNavigate?: () => void;
@@ -76,20 +99,38 @@ export function ChatSidebar({
         ) : (
           <ul className="space-y-0.5">
             {threads.map((t) => (
-              <li key={t.id}>
+              <li key={t.id} className="group/thread relative">
                 <button
                   onClick={() => {
                     onSelectThread(t.id);
                     onNavigate?.();
                   }}
                   className={cn(
-                    "w-full truncate rounded-md px-2.5 py-2 text-left text-sm transition-colors",
+                    // Padded right to leave room for the delete control, which
+                    // sits over the row rather than in it: nesting a button
+                    // inside a button is invalid, and a flex sibling would
+                    // shorten the title even when the control is hidden.
+                    "w-full truncate rounded-md py-2 pr-9 pl-2.5 text-left text-sm transition-colors",
                     t.id === activeThread
                       ? "bg-muted font-medium text-foreground"
                       : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
                   )}
                 >
                   {t.title}
+                </button>
+                <button
+                  onClick={() => onDeleteThread(t.id)}
+                  aria-label={`Delete chat: ${t.title}`}
+                  title="Delete this chat"
+                  className={cn(
+                    "absolute inset-y-1 right-1 grid w-7 place-items-center rounded-md text-muted-foreground transition-colors",
+                    "hover:bg-destructive/10 hover:text-destructive",
+                    // Hidden until wanted on the desktop rail, always visible
+                    // on touch, where there is no hover to reveal it.
+                    "opacity-100 focus-visible:opacity-100 lg:opacity-0 lg:group-hover/thread:opacity-100",
+                  )}
+                >
+                  <Trash2 className="size-3.5" />
                 </button>
               </li>
             ))}
@@ -103,42 +144,65 @@ export function ChatSidebar({
         <p className="px-1 text-[0.6875rem] font-medium tracking-[0.12em] text-muted-foreground uppercase">
           Language
         </p>
-        <div className="grid grid-cols-2 gap-1.5">
-          {languages.map((l) => {
-            const asr = coverageOf(l, "asr");
-            return (
-              <button
-                key={l.code}
-                onClick={() => {
-                  onLanguageChange(l.code);
-                  onNavigate?.();
-                }}
-                aria-pressed={l.code === language}
-                className={cn(
-                  "rounded-md border px-2 py-1.5 text-left transition-colors",
-                  l.code === language
-                    ? "border-primary/40 bg-primary/10"
-                    : "border-border hover:bg-muted/60",
-                )}
-              >
-                <span
-                  lang={l.iso}
-                  className="block truncate text-sm leading-tight"
-                >
-                  {l.native_name}
-                </span>
-                <span className="flex items-center gap-1 truncate text-xs text-muted-foreground">
-                  {l.name.split(" / ")[0]}
-                  {asr !== "native" && (
-                    <span className="text-warning" title="Recognition is limited">
-                      ●
-                    </span>
+        {/* Only this block waits on /languages. The rest of the sidebar --
+            the wordmark, New chat, the thread list -- needs nothing from the
+            service, and blanking all of it behind one skeleton made a busy
+            backend look like a frontend that never loaded. */}
+        {languagesPending ? (
+          <div className="grid grid-cols-2 gap-1.5">
+            {[0, 1, 2, 3, 4, 5].map((i) => (
+              <Skeleton key={i} className="h-11 w-full" />
+            ))}
+          </div>
+        ) : languagesError ? (
+          <div className="space-y-1.5 px-1">
+            <p className="text-xs text-muted-foreground">{languagesError}</p>
+            <Button variant="outline" size="sm" onClick={onRetryLanguages}>
+              <RotateCw data-icon="inline-start" />
+              Retry
+            </Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-1.5">
+            {languages.map((l) => {
+              const asr = coverageOf(l, "asr");
+              return (
+                <button
+                  key={l.code}
+                  onClick={() => {
+                    onLanguageChange(l.code);
+                    onNavigate?.();
+                  }}
+                  aria-pressed={l.code === language}
+                  className={cn(
+                    "rounded-md border px-2 py-1.5 text-left transition-colors",
+                    l.code === language
+                      ? "border-primary/40 bg-primary/10"
+                      : "border-border hover:bg-muted/60",
                   )}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+                >
+                  <span
+                    lang={l.iso}
+                    className="block truncate text-sm leading-tight"
+                  >
+                    {l.native_name}
+                  </span>
+                  <span className="flex items-center gap-1 truncate text-xs text-muted-foreground">
+                    {l.name.split(" / ")[0]}
+                    {asr !== "native" && (
+                      <span
+                        className="text-warning"
+                        title="Recognition is limited"
+                      >
+                        ●
+                      </span>
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <Separator />

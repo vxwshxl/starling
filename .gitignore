@@ -30,6 +30,8 @@ models/
 # --- Node / Next ---
 node_modules/
 .next/
+# NEXT_DIST_DIR, for a second Next process that must not fight the dev server
+.next-*/
 out/
 dist/
 build/

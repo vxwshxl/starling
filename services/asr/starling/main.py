@@ -40,12 +40,16 @@ app = FastAPI(
 )
 
 # The Next.js shell runs on :3000 and this on :8000. Local dev only.
+#
+# Any loopback port, not just 3000: Next picks 3001 whenever 3000 is taken,
+# and pinning the list meant that perfectly ordinary case surfaced as "No
+# response from http://127.0.0.1:8000" with nothing to say it was CORS. The
+# service binds to 127.0.0.1 and holds no credentials, so the widening buys
+# a real convenience at no exposure -- an attacker who can already run code
+# on this machine does not need a browser's help.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -174,6 +178,7 @@ def chat_endpoint(
             "result": {
                 "text": result.text,
                 "grounded": result.grounded,
+                "kind": result.kind,
                 "language": result.language,
                 "warnings": result.warnings,
                 "sources": [

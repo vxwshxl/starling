@@ -16,6 +16,39 @@ const display = Instrument_Serif({
   variable: "--font-display",
 });
 
+// Bitdefender's TrafficLight extension (and a few ad blockers) stamp
+// `bis_skin_checked` / `bis_register` / `__processed_*` onto every div after
+// the HTML is parsed but before React hydrates, which React then reports as a
+// hydration mismatch. suppressHydrationWarning does not inherit, so it cannot
+// cover nested nodes — the only fix from inside the app is to strip the
+// attributes back off as fast as they appear. Dev only; nothing to do at
+// runtime in production, where the warning is not surfaced anyway.
+const STRIP_EXTENSION_ATTRS = `(function(){
+  function clean(el){
+    if(!el||el.nodeType!==1||!el.attributes)return;
+    var a=el.attributes;
+    for(var i=a.length-1;i>=0;i--){
+      var n=a[i].name;
+      if(n.indexOf("bis_")===0||n.indexOf("__processed")===0)el.removeAttribute(n);
+    }
+  }
+  function sweep(root){
+    clean(root);
+    if(root.querySelectorAll){
+      var els=root.querySelectorAll("*");
+      for(var i=0;i<els.length;i++)clean(els[i]);
+    }
+  }
+  new MutationObserver(function(muts){
+    for(var i=0;i<muts.length;i++){
+      var m=muts[i];
+      if(m.type==="attributes")clean(m.target);
+      else for(var j=0;j<m.addedNodes.length;j++)sweep(m.addedNodes[j]);
+    }
+  }).observe(document.documentElement,{subtree:true,childList:true,attributes:true});
+  sweep(document.documentElement);
+})();`;
+
 export const metadata: Metadata = {
   title: "Starling",
   description:
@@ -42,6 +75,9 @@ export default function RootLayout({
           Browser extensions inject attributes here (bis_register and friends)
           before React hydrates, which is not something the app can prevent. */}
       <body className="antialiased" suppressHydrationWarning>
+        {process.env.NODE_ENV !== "production" && (
+          <script dangerouslySetInnerHTML={{ __html: STRIP_EXTENSION_ATTRS }} />
+        )}
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

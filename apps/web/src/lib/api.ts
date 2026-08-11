@@ -83,10 +83,18 @@ export type Source = {
   score: number;
 };
 
+/**
+ * Why the reply says what it says. `grounded` cannot carry this on its own:
+ * a refusal and a greeting are both ungrounded, and only one of them should
+ * be labelled "not covered by the knowledge base".
+ */
+export type ChatKind = "answer" | "refusal" | "small_talk";
+
 export type ChatResult = {
   text: string;
-  /** False when nothing matched and a fixed refusal was returned. */
+  /** False when the text did not come from retrieved passages. */
   grounded: boolean;
+  kind: ChatKind;
   language: string;
   warnings: string[];
   sources: Source[];
@@ -202,8 +210,23 @@ export type LanguagesResponse = {
   languages: LanguageInfo[];
 };
 
+/**
+ * Ceiling on the cheap GETs.
+ *
+ * Neither /health nor /languages touches a model, so either one taking this
+ * long means the service is wedged -- or, far more often in practice, that
+ * MLX is mid-generation and holding the GIL, starving the thread that would
+ * serve them. Without a deadline those requests hang indefinitely and the UI
+ * sits on a loading skeleton forever with nothing to retry.
+ */
+const GET_TIMEOUT_MS = 12_000;
+
 async function getJSON<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { cache: "no-store", signal });
+  const deadline = AbortSignal.timeout(GET_TIMEOUT_MS);
+  const res = await fetch(`${API_BASE}${path}`, {
+    cache: "no-store",
+    signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
   return (await res.json()) as T;
 }
@@ -221,5 +244,10 @@ export const getLanguages = (signal?: AbortSignal) =>
  */
 export function describeError(err: unknown): string {
   if (err instanceof TypeError) return `No response from ${API_BASE}`;
+  if (err instanceof DOMException && err.name === "TimeoutError") {
+    // Almost always the service being busy generating rather than dead --
+    // saying "timed out" invites a retry, "no response" invites a restart.
+    return "The speech service did not answer in time. It may be busy.";
+  }
   return err instanceof Error ? err.message : String(err);
 }
