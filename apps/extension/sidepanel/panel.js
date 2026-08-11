@@ -167,96 +167,220 @@ function startBotTurn() {
 // the voice and the text leaves the machine, which the service flags back to
 // us in `warnings` and which is surfaced here rather than buried.
 
-const SPEAKER_PATH =
-  "M11 5 6 9H2v6h4l5 4V5Z M15.5 8.5a5 5 0 0 1 0 7 M19 5a9 9 0 0 1 0 14";
+const BARS = 48;
 
-function speakerIcon() {
+function svgIcon(paths, { size = 13, fill = "none", width = 2 } = {}) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("width", "13");
-  svg.setAttribute("height", "13");
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("width", size);
+  svg.setAttribute("height", size);
+  svg.setAttribute("fill", fill);
+  svg.setAttribute("stroke", fill === "none" ? "currentColor" : "none");
+  svg.setAttribute("stroke-width", width);
   svg.setAttribute("stroke-linecap", "round");
   svg.setAttribute("stroke-linejoin", "round");
-  for (const d of SPEAKER_PATH.trim().split(" M")) {
+  for (const d of paths) {
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", d.startsWith("M") ? d : `M${d}`);
+    path.setAttribute("d", d);
     svg.append(path);
   }
   return svg;
 }
 
-/** Attach a "Listen" control to a finished answer. */
+const ICON_SPEAKER = ["M11 5 6 9H2v6h4l5 4V5Z", "M15.5 8.5a5 5 0 0 1 0 7", "M19 5a9 9 0 0 1 0 14"];
+const ICON_PLAY = ["M8 5.5v13l11-6.5z"];
+const ICON_PAUSE = ["M8 5h3v14H8z", "M13 5h3v14h-3z"];
+
+function clock(seconds) {
+  if (!Number.isFinite(seconds)) return "0:00";
+  const total = Math.floor(seconds);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/** Decode the clip once and reduce it to per-bar peak amplitudes.
+ *
+ *  Real peaks, not a decorative animation: the shape has to match the audio,
+ *  because its job is to let someone see where the speech is and scrub to it.
+ *  It also shows at a glance whether synthesis produced speech at all or the
+ *  near-silence failure mode the CPU/MPS notes in CLAUDE.md warn about -- a
+ *  flat line is the tell, and a decorative waveform would hide it.
+ */
+async function peaksOf(url) {
+  const bytes = await (await fetch(url)).arrayBuffer();
+  const ctx = new AudioContext();
+  try {
+    const buffer = await ctx.decodeAudioData(bytes);
+    const data = buffer.getChannelData(0);
+    const per = Math.floor(data.length / BARS) || 1;
+    const out = [];
+    let loudest = 0;
+    for (let i = 0; i < BARS; i++) {
+      let peak = 0;
+      for (let j = i * per; j < (i + 1) * per && j < data.length; j++) {
+        const v = Math.abs(data[j]);
+        if (v > peak) peak = v;
+      }
+      out.push(peak);
+      if (peak > loudest) loudest = peak;
+    }
+    // Normalised against the clip's own peak. OmniVoice output sits around
+    // 0.5, so an un-normalised waveform would be a permanently half-height
+    // stub.
+    return loudest > 0 ? out.map((p) => p / loudest) : out;
+  } finally {
+    void ctx.close();
+  }
+}
+
+/** The player itself: play/pause, a scrubbable waveform, elapsed/total.
+ *
+ *  The same three affordances as `<audio controls>`, drawn in the app's own
+ *  language. The native element renders as a wide slab of Chrome's own chrome
+ *  -- its greys, its radius, its volume slider -- which in a 380px monochrome
+ *  panel looks like a foreign object. Ported from the web app's AudioPlayer
+ *  so the extension and the site show the same thing.
+ */
+function audioPlayer(src) {
+  const wrap = el("div", "player");
+  const audio = new Audio(src);
+  audio.preload = "metadata";
+
+  const button = el("button", "play");
+  button.type = "button";
+  button.setAttribute("aria-label", "Play");
+  button.append(svgIcon(ICON_PLAY, { size: 14, fill: "currentColor" }));
+
+  const wave = el("div", "wave");
+  wave.setAttribute("role", "slider");
+  wave.tabIndex = 0;
+  wave.setAttribute("aria-label", "Seek");
+
+  const time = el("span", "time", "0:00/0:00");
+  wrap.append(button, wave, time);
+
+  let bars = [];
+  let total = 0;
+
+  const paint = () => {
+    const progress = total > 0 ? audio.currentTime / total : 0;
+    bars.forEach((bar, i) => {
+      bar.classList.toggle("on", i / BARS <= progress);
+    });
+    time.textContent = `${clock(audio.currentTime)}/${clock(total)}`;
+  };
+
+  peaksOf(src)
+    .then((peaks) => {
+      wave.replaceChildren();
+      bars = peaks.map((p) => {
+        const bar = el("span", "bar");
+        bar.style.height = `${Math.max(9, p * 100)}%`;
+        wave.append(bar);
+        return bar;
+      });
+      paint();
+    })
+    .catch(() => {
+      // Decoding is a nicety; playback still works without the waveform.
+      wave.append(el("span", "wave-fallback", "audio ready"));
+    });
+
+  const setIcon = (playing) => {
+    button.replaceChildren(
+      svgIcon(playing ? ICON_PAUSE : ICON_PLAY, { size: 14, fill: "currentColor" }),
+    );
+    button.setAttribute("aria-label", playing ? "Pause" : "Play");
+  };
+
+  button.addEventListener("click", () => {
+    if (audio.paused) audio.play().catch(() => setIcon(false));
+    else audio.pause();
+  });
+  audio.addEventListener("play", () => setIcon(true));
+  audio.addEventListener("pause", () => setIcon(false));
+  audio.addEventListener("ended", () => setIcon(false));
+  audio.addEventListener("timeupdate", paint);
+  audio.addEventListener("loadedmetadata", () => {
+    total = audio.duration;
+    paint();
+  });
+
+  const seekTo = (clientX) => {
+    if (!total) return;
+    const box = wave.getBoundingClientRect();
+    audio.currentTime = Math.max(0, Math.min(total, ((clientX - box.left) / box.width) * total));
+  };
+  wave.addEventListener("click", (event) => seekTo(event.clientX));
+  wave.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowRight") audio.currentTime = Math.min(total, audio.currentTime + 5);
+    if (event.key === "ArrowLeft") audio.currentTime = Math.max(0, audio.currentTime - 5);
+  });
+
+  return { wrap, audio };
+}
+
+// ---------------------------------------------------------------------------
+// Speaking an answer
+// ---------------------------------------------------------------------------
+//
+// OmniVoice through POST /tts, on Modal rather than on this CPU. Same model,
+// rented GPU: local synthesis measured 31-37 s for one answer, and answers
+// are now 6-12 sentences, so on-device is minutes and unusable from a panel.
+//
+// The trade is real and is printed, not buried: Modal does not clone the
+// speaker's voice and the text leaves the machine. The service returns both
+// caveats in `warnings` and they are shown under the player.
+
+/** Attach a Speak control that becomes a player once synthesis finishes. */
 function addSpeakButton(container, text, language) {
   if (!text || !text.trim()) return;
 
   const row = el("div", "speak-row");
   const button = el("button", "speak");
   button.type = "button";
-  const caption = el("span", "", "Listen");
-  button.append(speakerIcon(), caption);
-  const note = el("span", "speak-note", "");
-  row.append(button, note);
+  const caption = el("span", "", "Speak");
+  const elapsed = el("span", "speak-ms", "");
+  button.append(svgIcon(ICON_SPEAKER), caption, elapsed);
+  row.append(button);
+  container.append(row);
 
-  let audio = null;
   let ticker = null;
 
-  const reset = (label) => {
-    clearInterval(ticker);
-    caption.textContent = label;
-    button.disabled = false;
-  };
-
   button.addEventListener("click", async () => {
-    // Second press stops playback rather than queueing another synthesis.
-    if (audio && !audio.paused) {
-      audio.pause();
-      audio.currentTime = 0;
-      reset("Listen");
-      return;
-    }
-    if (audio) {
-      audio.play();
-      reset("Stop");
-      return;
-    }
-
     button.disabled = true;
-    note.textContent = "";
     const started = Date.now();
-    caption.textContent = "Synthesising…";
+    caption.textContent = "Synthesising";
+    // The elapsed counter is the whole reason a 25-second wait is tolerable:
+    // without it a silent button is indistinguishable from a hung one.
     ticker = setInterval(() => {
-      caption.textContent = `Synthesising… ${Math.round((Date.now() - started) / 1000)}s`;
-    }, 1000);
+      elapsed.textContent = `${Date.now() - started} ms`;
+    }, 100);
 
     try {
-      // OmniVoice on Modal, not OmniVoice on this CPU. Same model, rented
-      // GPU. Local synthesis measured 31-37 s for one answer on the Modal
-      // dashboard's own timings, and answers are now 6-12 sentences, so the
-      // local path is minutes and unusable from a side panel.
-      //
-      // The trade is real and is not hidden: Modal does not clone the
-      // speaker's voice, and the text leaves the machine. The service returns
-      // both caveats in `warnings` and they are printed next to the button.
       const { result } = await client.speak(text, language, { backend: "modal" });
-      audio = new Audio(client.audioUrl(result.audio_path));
-      audio.addEventListener("ended", () => reset("Listen again"));
-      await audio.play();
-      reset("Stop");
-      // The service attaches a caveat when synthesis was not local -- that
-      // the voice is not cloned and the text left the machine. Both of
-      // Starling's headline claims are false in that mode, so it is shown,
-      // not swallowed.
-      if (result.warnings?.length) note.textContent = result.warnings.join(" ");
+      clearInterval(ticker);
+      caption.textContent = "Speak";
+      elapsed.textContent = `${Date.now() - started} ms`;
+
+      const { wrap, audio } = audioPlayer(client.audioUrl(result.audio_path));
+      container.append(wrap);
+      if (result.warnings?.length) {
+        container.append(el("p", "speak-note", result.warnings.join(" ")));
+      }
+      // Pressing Speak is a request to hear it, so it plays.
+      audio.play().catch(() => {
+        /* autoplay policy can refuse; the play button is right there */
+      });
+      button.remove();
+      scrollDown();
     } catch (err) {
-      reset("Listen");
+      clearInterval(ticker);
+      caption.textContent = "Speak";
+      elapsed.textContent = "";
+      button.disabled = false;
       showError(err);
     }
   });
-
-  container.append(row);
 }
 
 function describeAction(decision) {
