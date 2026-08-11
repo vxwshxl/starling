@@ -59,9 +59,20 @@ async function peaksOf(url: string, signal: AbortSignal): Promise<number[]> {
  */
 export function AudioPlayer({
   src,
+  autoplayToken,
   className,
 }: {
   src: string;
+  /**
+   * Bumped once per completed synthesis to start playback.
+   *
+   * A counter rather than a boolean because re-synthesising the same text on
+   * the same backend yields the identical file, and therefore the identical
+   * URL -- keying on `src` would make the second Speak a silent no-op after
+   * the user had waited half a minute for it. Undefined means never autoplay,
+   * which is what a thread restored from storage wants.
+   */
+  autoplayToken?: number;
   className?: string;
 }) {
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -69,6 +80,20 @@ export function AudioPlayer({
   const [playing, setPlaying] = useState(false);
   const [at, setAt] = useState(0);
   const [total, setTotal] = useState(0);
+
+  // This element is the ONLY thing that ever plays a clip, and a re-render
+  // must not start a second pass over audio that is already running.
+  const started = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (autoplayToken === undefined || started.current === autoplayToken) return;
+    started.current = autoplayToken;
+    const el = audio.current;
+    if (!el) return;
+    el.currentTime = 0;
+    void el.play().catch(() => {
+      /* autoplay policy can refuse; the play button is right there */
+    });
+  }, [autoplayToken]);
 
   useEffect(() => {
     const controller = new AbortController();

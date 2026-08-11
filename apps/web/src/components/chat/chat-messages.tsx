@@ -7,6 +7,7 @@ import {
   BookOpen,
   BrainCircuit,
   CircleAlert,
+  Cloud,
   Languages,
   Loader2,
   Mic,
@@ -18,6 +19,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { Message } from "@/hooks/use-chat";
+import type { TTSBackend } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const SUGGESTIONS = [
@@ -79,11 +81,13 @@ function Bubble({
   message,
   onSpeak,
   showWarnings,
+  ttsBackend,
 }: {
   message: Message;
   onSpeak: (id: string, text: string) => void;
   /** Warnings already shown earlier in the thread are suppressed here. */
   showWarnings: string[];
+  ttsBackend: TTSBackend;
 }) {
   const isUser = message.role === "user";
 
@@ -180,12 +184,15 @@ function Bubble({
                 )}
                 {message.speaking ? "Synthesising…" : "Speak"}
               </Button>
-              {/* Voice cloning runs on CPU at roughly 6x real time, so a
+              {/* On-device cloning runs at roughly 6x real time, so a
                   three-sentence answer is half a minute of silence. Saying so
-                  is the difference between waiting and reloading the page. */}
+                  is the difference between waiting and reloading the page.
+                  The cloud path is ~10x faster and needs no such apology. */}
               {message.speaking && (
                 <span className="text-xs text-muted-foreground">
-                  about 30 s — OmniVoice runs on the CPU
+                  {ttsBackend === "modal"
+                    ? "a few seconds — on the cloud GPU"
+                    : "about 30 s — OmniVoice runs on this CPU"}
                 </span>
               )}
               {/* A refusal costs a fraction of a millisecond, and "0 ms" next
@@ -200,8 +207,22 @@ function Bubble({
             </div>
 
             {message.audioUrl && (
-              <AudioPlayer src={message.audioUrl} className="mt-1" />
+              <AudioPlayer
+                src={message.audioUrl}
+                autoplayToken={message.autoplayToken}
+                className="mt-1"
+              />
             )}
+
+            {message.ttsWarnings?.map((w) => (
+              <p
+                key={w}
+                className="flex items-start gap-1.5 text-xs text-warning"
+              >
+                <Cloud className="mt-px size-3.5 shrink-0" aria-hidden />
+                <span>{w}</span>
+              </p>
+            ))}
           </>
         )}
       </div>
@@ -213,10 +234,12 @@ export function ChatMessages({
   messages,
   onSpeak,
   onPickSuggestion,
+  ttsBackend,
 }: {
   messages: Message[];
   onSpeak: (id: string, text: string) => void;
   onPickSuggestion: (q: string) => void;
+  ttsBackend: TTSBackend;
 }) {
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -239,7 +262,13 @@ export function ChatMessages({
         const fresh = (m.warnings ?? []).filter((w) => !seen.has(w));
         fresh.forEach((w) => seen.add(w));
         return (
-          <Bubble key={m.id} message={m} onSpeak={onSpeak} showWarnings={fresh} />
+          <Bubble
+            key={m.id}
+            message={m}
+            onSpeak={onSpeak}
+            showWarnings={fresh}
+            ttsBackend={ttsBackend}
+          />
         );
       })}
       <div ref={endRef} />

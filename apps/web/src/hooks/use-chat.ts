@@ -10,6 +10,7 @@ import {
   type ChatKind,
   type Source,
   type Timings,
+  type TTSBackend,
 } from "@/lib/api";
 
 export type Message = {
@@ -31,6 +32,11 @@ export type Message = {
   error?: string;
   /** Set once this message has been spoken, so the audio can be replayed. */
   audioUrl?: string;
+  /** Bumped by each completed synthesis so the player starts itself once.
+   *  Cleared on restore, or reopening a thread would blare. */
+  autoplayToken?: number;
+  /** Caveats from the synthesis backend, e.g. that the audio left the machine. */
+  ttsWarnings?: string[];
   /** True while synthesis is running for this message. */
   speaking?: boolean;
   /** Set when the message came from the microphone rather than typing. */
@@ -40,7 +46,7 @@ export type Message = {
 const newId = () =>
   globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
 
-export function useChat(language: string) {
+export function useChat(language: string, ttsBackend: TTSBackend = "local") {
   const [messages, setMessages] = useState<Message[]>([]);
   const [busy, setBusy] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -107,16 +113,23 @@ export function useChat(language: string) {
     async (id: string, text: string) => {
       patch(id, { speaking: true, error: undefined });
       try {
-        const { url } = await synthesize(text, language);
-        patch(id, { audioUrl: url, speaking: false });
-        void new Audio(url).play().catch(() => {
-          /* autoplay policy can refuse; the player element is still rendered */
+        const { url, warnings } = await synthesize(text, language, ttsBackend);
+        // `autoplay` and NOT a detached `new Audio(url).play()`. That is what
+        // caused the double voice: the bare Audio element started playing
+        // while <AudioPlayer> mounted its own <audio> for the same clip, and
+        // pressing play on the visible one put a second voice over the first
+        // with no way to stop the invisible one.
+        patch(id, {
+          audioUrl: url,
+          autoplayToken: Date.now(),
+          speaking: false,
+          ttsWarnings: warnings,
         });
       } catch (err) {
         patch(id, { speaking: false, error: describeError(err) });
       }
     },
-    [language, patch],
+    [language, ttsBackend, patch],
   );
 
   /** Drop the spectrum tap. Safe to call twice. */
@@ -213,7 +226,12 @@ export function useChat(language: string) {
     // `speaking` flag saved mid-request would otherwise come back as a
     // spinner that never resolves.
     setMessages(
-      next.map((m) => ({ ...m, pending: false, speaking: false })),
+      next.map((m) => ({
+        ...m,
+        pending: false,
+        speaking: false,
+        autoplayToken: undefined,
+      })),
     );
     setBusy(false);
     setRecorderError(null);

@@ -25,7 +25,7 @@ from typing import Any
 
 import soundfile as sf
 
-from . import languages, models
+from . import languages, models, tts_backends
 from .audio import probe_duration, to_wav_16k
 from .config import settings
 from .timing import Timings
@@ -67,6 +67,7 @@ class SynthesisResult:
     tts_native: bool
     text: str
     cloned: bool
+    backend: str = "local"
     warnings: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -78,6 +79,7 @@ class SynthesisResult:
             "tts_native": self.tts_native,
             "text": self.text,
             "cloned": self.cloned,
+            "backend": self.backend,
             "warnings": self.warnings,
         }
 
@@ -127,14 +129,17 @@ def synthesize(
     reference_text: str | None = None,
     timings: Timings | None = None,
     num_step: int | None = None,
-    guidance_scale: float = 2.0,
-    speed: float = 1.0,
+    backend: str | None = None,
 ) -> tuple[SynthesisResult, Timings]:
     """Text -> speech, optionally cloning the voice in `reference_audio`.
 
     Passing `reference_text` matters: without it OmniVoice loads its own
     Whisper to transcribe the reference, costing gigabytes we do not have. In
     roundtrip() we already know what the speaker said, so we always supply it.
+
+    `backend` picks where synthesis runs -- "local" or "modal", or None for the
+    configured default. See tts_backends.py; the remote one is far faster and
+    cannot clone.
     """
     timings = timings or Timings()
     lang = languages.get(language_code)
@@ -142,9 +147,18 @@ def synthesize(
     # None means "whatever the deployment is tuned to", which is the setting
     # that decides whether this call takes 17 seconds or 138. See config.py.
     num_step = settings.tts_num_step if num_step is None else num_step
+    engine = tts_backends.build(backend)
 
     if not text.strip():
         raise ValueError("Cannot synthesise empty text.")
+
+    # Only the local backend takes a reference at all, so this check would
+    # reject a perfectly valid remote call. Drop the reference instead and say
+    # so in the warnings, rather than failing the request.
+    if reference_audio is not None and not engine.clones:
+        logger.info("%s cannot clone; ignoring the reference audio", engine.name)
+        reference_audio = None
+        reference_text = None
 
     if reference_audio is not None and not (reference_text or "").strip():
         # Refuse rather than let OmniVoice quietly load a second Whisper to
@@ -173,34 +187,25 @@ def synthesize(
                     ref_duration,
                 )
 
-    with timings.stage("tts_load"):
-        model = models.get_tts()
-
     with timings.stage("tts"):
-        audios = model.generate(
+        samples, sample_rate = engine.synthesize(
             text=text,
-            language=tts_code,
-            ref_audio=str(ref_wav) if ref_wav else None,
+            tts_code=tts_code,
+            ref_wav=ref_wav,
             ref_text=reference_text,
             num_step=num_step,
-            guidance_scale=guidance_scale,
-            speed=speed,
         )
 
-    # OmniVoice returns a list of 1-D float arrays. Its rate is 24 kHz, NOT the
-    # 16 kHz we feed in -- ask the model rather than assuming either.
-    sample_rate = int(model.sampling_rate)
-    out_path = _workdir() / f"tts_{abs(hash((text, language_code)))}.wav"
+    # The rate comes back from the backend, never assumed: OmniVoice is 24 kHz
+    # locally, and whatever Modal returns is whatever its MP3 decoded to.
+    # Include the backend in the filename so switching modes does not serve a
+    # cached clip from the other one.
+    out_path = _workdir() / f"tts_{engine.name}_{abs(hash((text, language_code)))}.wav"
 
     with timings.stage("write"):
-        sf.write(str(out_path), audios[0], sample_rate)
+        sf.write(str(out_path), samples, sample_rate)
 
-    warnings = lang.warnings()
-    if ref_wav is not None and reference_text is None:
-        warnings.append(
-            "No reference text supplied, so OmniVoice loaded a second Whisper "
-            "to transcribe the reference audio. Slower and far heavier on RAM."
-        )
+    warnings = lang.warnings() + engine.warnings()
 
     result = SynthesisResult(
         audio_path=out_path,
@@ -209,10 +214,16 @@ def synthesize(
         tts_code=tts_code,
         tts_native=lang.tts_native,
         text=text,
-        cloned=ref_wav is not None,
+        cloned=ref_wav is not None and engine.clones,
+        backend=engine.name,
         warnings=warnings,
     )
-    logger.info("synthesised %.1fs of audio at %d Hz", len(audios[0]) / sample_rate, sample_rate)
+    logger.info(
+        "synthesised %.1fs of audio at %d Hz on %s",
+        len(samples) / sample_rate,
+        sample_rate,
+        engine.name,
+    )
     return result, timings
 
 

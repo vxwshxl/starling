@@ -32,7 +32,20 @@ export type Health = {
      * configured default before that. It is 24 kHz, not the 16 kHz the rest
      * of the pipeline runs at.
      */
-    tts: { model: string; loaded: boolean; sample_rate: number };
+    tts: {
+      model: string;
+      loaded: boolean;
+      sample_rate: number;
+      /** OmniVoice denoising steps. Cost is linear in this. */
+      num_step?: number;
+      /** Which engine synthesis uses unless a request overrides it. */
+      backend?: TTSBackend;
+      /** False when MODAL_TTS_URL is unset, so the cloud toggle cannot work. */
+      modal_configured?: boolean;
+    };
+    /** Both are mlx-lm and load outside the ASR/TTS loader machinery. */
+    llm?: { model: string; loaded: boolean };
+    translate?: { model: string; loaded: boolean };
   };
 };
 
@@ -40,6 +53,16 @@ export type Health = {
 export type ResidentModel = { backend: string; model: string };
 
 export type ModelTarget = "asr" | "tts" | "llm" | "translate" | "all";
+
+/**
+ * Where speech is synthesised.
+ *
+ *   local  OmniVoice on this CPU. Clones the speaker's voice, stays offline,
+ *          and runs at ~6x real time -- half a minute for a short answer.
+ *   modal  A serverless GPU. ~0.55x real time, so roughly ten times faster,
+ *          but it cannot clone and the text leaves the machine.
+ */
+export type TTSBackend = "local" | "modal";
 
 async function post<T>(path: string, body?: FormData): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -159,11 +182,18 @@ export async function transcribe(
 export async function synthesize(
   text: string,
   language: string,
+  backend: TTSBackend = "local",
   signal?: AbortSignal,
-): Promise<{ url: string; sampleRate: number; warnings: string[] }> {
+): Promise<{
+  url: string;
+  sampleRate: number;
+  backend: string;
+  warnings: string[];
+}> {
   const form = new FormData();
   form.set("text", text);
   form.set("language", language);
+  form.set("backend", backend);
   const res = await fetch(`${API_BASE}/tts`, {
     method: "POST",
     body: form,
@@ -175,6 +205,7 @@ export async function synthesize(
     result: {
       audio_path: string;
       sample_rate: number;
+      backend: string;
       warnings: string[];
     };
   };
@@ -183,6 +214,7 @@ export async function synthesize(
   return {
     url: `${API_BASE}/audio/${encodeURIComponent(name)}`,
     sampleRate: data.result.sample_rate,
+    backend: data.result.backend,
     warnings: data.result.warnings ?? [],
   };
 }

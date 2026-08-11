@@ -60,6 +60,20 @@ class Settings:
     # more than the fidelity; judge that by ear, not by RMS.
     tts_num_step: int = _env_int("STARLING_TTS_STEPS", 8)
 
+    # Where synthesis runs by default: "local" (this CPU, clones the voice,
+    # ~6x real time) or "modal" (a rented GPU, ~0.55x real time, no cloning
+    # and the text leaves the machine). Per-request overridable, because the
+    # header toggle has to work without restarting the service.
+    tts_backend: str = _env("STARLING_TTS_BACKEND", "local")
+    # Public, unauthenticated, and already deployed. Kept as a default rather
+    # than left blank so the toggle works out of the box; override per machine
+    # with MODAL_TTS_URL. Note nothing in this repo reads a .env file -- these
+    # have to be real environment variables.
+    modal_tts_url: str = _env(
+        "MODAL_TTS_URL",
+        "https://bodookhrang--omnivoice-tts-omnivoicetts-tts.modal.run",
+    )
+
     # Every model sees 16 kHz mono. OmniVoice hands back 24 kHz.
     # These are invariants, not tunables -- they live here to be imported,
     # not to be overridden from the environment.

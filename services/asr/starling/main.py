@@ -126,15 +126,22 @@ async def tts(
     language: str = Form(languages.DEFAULT_LANGUAGE),
     reference_audio: UploadFile | None = File(None),
     reference_text: str | None = Form(None),
+    backend: str | None = Form(None),
 ) -> dict[str, Any]:
+    """Synthesise speech. `backend` is "local", "modal", or omitted for the
+    configured default -- per request, so the UI toggle needs no restart."""
     try:
         if reference_audio is not None:
             with _saved_upload(reference_audio) as ref:
                 result, timings = pipeline.synthesize(
-                    text, language, reference_audio=ref, reference_text=reference_text
+                    text,
+                    language,
+                    reference_audio=ref,
+                    reference_text=reference_text,
+                    backend=backend,
                 )
         else:
-            result, timings = pipeline.synthesize(text, language)
+            result, timings = pipeline.synthesize(text, language, backend=backend)
         return {"result": result.as_dict(), "timings": timings.as_dict()}
     except Exception as exc:
         raise _fail(exc) from exc

@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   Activity,
   Bird,
+  Cloud,
   MessageSquarePlus,
   RotateCw,
   Trash2,
@@ -47,6 +48,7 @@ export function ChatSidebar({
   onDeleteThread,
   onNewChat,
   onNavigate,
+  cloudTts,
   className,
 }: {
   languages: LanguageInfo[];
@@ -63,6 +65,8 @@ export function ChatSidebar({
   onNewChat: () => void;
   /** Called after any action that should dismiss the mobile drawer. */
   onNavigate?: () => void;
+  /** True when synthesis is going to the remote GPU rather than staying here. */
+  cloudTts?: boolean;
   className?: string;
 }) {
   return (
@@ -221,10 +225,24 @@ export function ChatSidebar({
       </div>
 
       <div className="space-y-2 text-xs text-muted-foreground">
-        <p className="flex items-center gap-1.5">
-          <WifiOff className="size-3.5 shrink-0" />
-          Runs offline. Nothing leaves this machine.
-        </p>
+        {/* This claim has to track reality. Recognition, answering and
+            translation are always local, but cloud synthesis sends the reply
+            text to a GPU, and a health assistant must not keep promising
+            privacy it is no longer delivering. */}
+        {cloudTts ? (
+          <p className="flex items-start gap-1.5 text-warning">
+            <Cloud className="mt-px size-3.5 shrink-0" />
+            <span>
+              Cloud voice is on: reply text is sent to a GPU to be spoken.
+              Everything else still runs here.
+            </span>
+          </p>
+        ) : (
+          <p className="flex items-center gap-1.5">
+            <WifiOff className="size-3.5 shrink-0" />
+            Runs offline. Nothing leaves this machine.
+          </p>
+        )}
         <Button asChild variant="ghost" size="sm" className="w-full justify-start">
           <Link href="/status" onClick={onNavigate}>
             <Activity data-icon="inline-start" />

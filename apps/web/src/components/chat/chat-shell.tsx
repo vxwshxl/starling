@@ -6,6 +6,7 @@ import { Menu, Play, Power, Square } from "lucide-react";
 import { ChatComposer } from "@/components/chat/chat-composer";
 import { ChatMessages } from "@/components/chat/chat-messages";
 import { ChatSidebar, type Thread } from "@/components/chat/chat-sidebar";
+import { TTSModeToggle } from "@/components/chat/tts-mode-toggle";
 import { ModeToggle } from "@/components/mode-toggle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,7 +25,7 @@ import {
 import { useChat } from "@/hooks/use-chat";
 import { useHealth } from "@/hooks/use-health";
 import { useLanguages } from "@/hooks/use-languages";
-import { loadModel, unloadModel } from "@/lib/api";
+import { loadModel, unloadModel, type TTSBackend } from "@/lib/api";
 import { coverageOf } from "@/lib/coverage";
 import { cn } from "@/lib/utils";
 
@@ -37,6 +38,7 @@ import { cn } from "@/lib/utils";
  * worth writing a migration for.
  */
 const THREADS_KEY = "starling.threads.v1";
+const TTS_MODE_KEY = "starling.tts-backend";
 
 function readThreads(): Thread[] {
   try {
@@ -68,15 +70,29 @@ export function ChatShell() {
   const [activeThread, setActiveThread] = useState<string | null>(null);
   const [drawer, setDrawer] = useState(false);
   const [starting, setStarting] = useState(false);
+  // Defaults to on-device: the private, voice-cloning path is the product,
+  // and the fast one is the deliberate exception.
+  const [ttsBackend, setTtsBackend] = useState<TTSBackend>("local");
 
-  const chat = useChat(language);
+  const chat = useChat(language, ttsBackend);
 
   // Read after mount, never during render: localStorage does not exist on the
   // server, and seeding state from it would hydrate against empty HTML.
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     setThreads(readThreads());
+    const saved = localStorage.getItem(TTS_MODE_KEY);
+    if (saved === "local" || saved === "modal") setTtsBackend(saved);
     setHydrated(true);
+  }, []);
+
+  const chooseTtsBackend = useCallback((next: TTSBackend) => {
+    setTtsBackend(next);
+    try {
+      localStorage.setItem(TTS_MODE_KEY, next);
+    } catch {
+      /* private mode; the choice just will not survive a reload */
+    }
   }, []);
 
   // Gated on hydrated STATE, not a ref. With a ref the guard is already true
@@ -116,6 +132,9 @@ export function ChatShell() {
   // The models the chat actually needs resident to answer and to listen.
   const modelsReady =
     health.state.phase === "up" && health.state.health.models.asr.loaded;
+  const modalConfigured =
+    health.state.phase !== "up" ||
+    health.state.health.models.tts.modal_configured !== false;
 
   const send = useCallback(
     (text: string) => {
@@ -196,9 +215,20 @@ export function ChatShell() {
         onDeleteThread={deleteThread}
         onNewChat={newChat}
         onNavigate={() => setDrawer(false)}
+        cloudTts={ttsBackend === "modal"}
       />
     ),
-    [languages, language, langs, threads, activeThread, selectThread, deleteThread, newChat],
+    [
+      languages,
+      language,
+      langs,
+      threads,
+      activeThread,
+      selectThread,
+      deleteThread,
+      newChat,
+      ttsBackend,
+    ],
   );
 
   return (
@@ -246,6 +276,12 @@ export function ChatShell() {
               </Badge>
             )}
           </div>
+
+          <TTSModeToggle
+            value={ttsBackend}
+            onChange={chooseTtsBackend}
+            disabled={!modalConfigured}
+          />
 
           <Tooltip>
             <TooltipTrigger asChild>
@@ -313,6 +349,7 @@ export function ChatShell() {
             messages={chat.messages}
             onSpeak={chat.speak}
             onPickSuggestion={send}
+            ttsBackend={ttsBackend}
           />
         </main>
 

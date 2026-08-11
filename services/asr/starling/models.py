@@ -134,6 +134,11 @@ def status() -> dict[str, Any]:
             "loaded": _tts is not None,
             "sample_rate": tts_sample_rate(),
             "num_step": settings.tts_num_step,
+            # Which engine synthesis runs on unless a request overrides it,
+            # and whether the remote one is reachable at all. The UI toggle
+            # needs both to avoid offering a mode that cannot work.
+            "backend": settings.tts_backend,
+            "modal_configured": bool(settings.modal_tts_url),
         },
         # These two live in their own modules because they are pure mlx-lm and
         # share none of the loader machinery above. They are reported here so

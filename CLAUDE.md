@@ -159,6 +159,29 @@ if the demo needs the speed more than the fidelity — judge that by ear, not by
 RMS. Short answers matter as much as the step count: the prompts cap replies at
 2–4 sentences partly for this reason.
 
+### Two synthesis backends, and what the fast one costs
+
+`tts_backends.py` routes between them; `POST /tts` takes a per-request
+`backend` field so the header toggle works without a restart.
+
+| | `local` | `modal` |
+|---|---|---|
+| Speed (same sentence) | 38 s | **3.0 s** warm, ~40 s cold |
+| Clones the speaker's voice | **yes** | no |
+| Audio leaves the machine | no | **yes** |
+| Output | 24 kHz WAV | MP3, transcoded here |
+
+The Modal endpoint's contract was established **by probing it**, not from
+documentation: POST JSON, `text` is required and is the only field that
+changes the output. `language`, `ref_audio` and `num_step` are all accepted
+and all silently ignored — verified by sending each and getting back
+byte-identical response lengths. Do not assume it grew a parameter; re-probe.
+
+Both of Starling's headline claims — "in your own voice" and "nothing leaves
+this machine" — are false in `modal` mode. That is not something to bury in a
+tooltip: `ModalBackend.warnings()` attaches a caveat to every result, the
+sidebar's privacy line swaps to a warning, and the default stays `local`.
+
 ## Language support
 
 Verified against the installed packages, not assumed:
@@ -236,6 +259,8 @@ services/asr/           Python 3.11, FastAPI, managed with uv (NOT pip/conda).
     asr_backends.py     ASRBackend protocol, MLXWhisperBackend (as, bn) and
                         IndicConformerBackend (brx, ONNX). Per-language routing
                         lives in models.get_asr().
+    tts_backends.py     TTSBackend protocol, LocalOmniVoiceBackend and
+                        ModalBackend (serverless GPU). Chosen per request.
     models.py           lazy singleton loaders, load()/unload() per target
     timing.py           Timings.stage() context manager
     knowledge.py        the ~20 English passages, by sector

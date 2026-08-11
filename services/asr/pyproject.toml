@@ -23,6 +23,9 @@ dependencies = [
     "indictranstoolkit>=1.1.1",
     "sentencepiece>=0.2.2",
     "mlx-lm>=0.31.3",
+    # Already present transitively via huggingface-hub; declared because
+    # tts_backends.py imports it directly to call the Modal GPU endpoint.
+    "requests>=2.32",
 ]
 
 [build-system]
