@@ -5,6 +5,7 @@
   "description": "Speech-to-speech AI assistant for low-resource Northeast Indian languages",
   "scripts": {
     "dev": "concurrently --kill-others --names api,web --prefix-colors magenta,cyan \"pnpm dev:api\" \"pnpm dev:web\"",
+    "stop": "bash scripts/stop.sh",
     "dev:web": "pnpm --filter @starling/web dev",
     "build:web": "pnpm --filter @starling/web build",
     "dev:api": "cd services/asr && STARLING_DEVICE=cpu uv run uvicorn starling.main:app --reload --port 8000",

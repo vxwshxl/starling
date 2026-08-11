@@ -66,11 +66,20 @@ All from the repo root unless noted.
 | Install Python deps | `pnpm setup:api` (or `cd services/asr && uv sync`) |
 | Install web deps | `pnpm install` |
 | Smoke check (no weights) | `pnpm smoke` |
+| **Run everything** | `pnpm dev` → API on :8000, web on :3000 |
+| **Stop everything** | `pnpm stop` |
 | Run the API | `pnpm dev:api` → http://127.0.0.1:8000 |
 | Run the Gradio lab | `pnpm lab` → http://127.0.0.1:7860 |
 | Run the web shell | `pnpm dev:web` → http://localhost:3000 |
 | Build the web shell | `pnpm build:web` |
 | API docs | http://127.0.0.1:8000/docs |
+
+`pnpm dev` supervises both halves with `concurrently --kill-others`, so if
+either one fails to start the other is torn down with it. The usual cause is a
+previous run that was orphaned — its terminal died without reaping it, the API
+kept :8000, and every later `pnpm dev` fails with `[Errno 48] Address already
+in use` on the `[api]` line only. `pnpm stop` clears that; see `scripts/stop.sh`
+for why it uses SIGKILL.
 
 The **Gradio lab is the primary debugging surface** — three tabs (ASR alone,
 TTS alone, round trip), each showing per-stage timings, the language caveats
