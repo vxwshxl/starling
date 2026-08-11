@@ -1,6 +1,6 @@
 "use client";
 
-import { CircleAlert, Info, Languages, TriangleAlert } from "lucide-react";
+import { CircleAlert, Languages, TriangleAlert } from "lucide-react";
 
 import { Tile, TileLabel } from "@/components/tile";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -57,6 +57,18 @@ function StageHeading({ stage }: { stage: Stage }) {
 
 export function LanguageTiles() {
   const state = useLanguages();
+
+  // Every enabled language is currently native at all three stages, so there
+  // is nothing to caveat and the tile would render empty. It is kept rather
+  // than deleted for the same reason the fallback machinery in languages.py
+  // is: the next language added may well need a stand-in somewhere, and this
+  // is what reports that. It reappears on its own when a warning exists.
+  const caveats =
+    state.phase === "ready"
+      ? state.data.languages.flatMap((lang) =>
+          lang.warnings.map((warning) => ({ lang, warning })),
+        )
+      : [];
 
   return (
     <>
@@ -142,45 +154,24 @@ export function LanguageTiles() {
         </CardContent>
       </Tile>
 
-      <Tile delay={300} className="col-span-full lg:col-span-6">
-        <CardHeader>
-          <TileLabel icon={<TriangleAlert className="size-3" />}>
-            Caveats
-          </TileLabel>
-        </CardHeader>
-        <CardContent className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          {state.phase === "loading" && (
-            <div className="space-y-2" aria-hidden>
-              <Skeleton className="h-16 w-full" />
-              <Skeleton className="h-16 w-full" />
-            </div>
-          )}
-
-          {state.phase === "ready" && (
-            <>
-              {state.data.languages.flatMap((lang) =>
-                lang.warnings.map((warning, i) => (
-                  <Alert key={`${lang.code}-${i}`} variant="warning">
-                    <TriangleAlert />
-                    <AlertTitle>{lang.name}</AlertTitle>
-                    <AlertDescription>{warning}</AlertDescription>
-                  </Alert>
-                )),
-              )}
-
-              <Alert>
-                <Info />
-                <AlertTitle>Why the gaps</AlertTitle>
-                <AlertDescription>
-                  Whisper covers 100 languages and OmniVoice 646, and the two
-                  sets do not line up over Northeast India. Recognition is the
-                  weaker half.
-                </AlertDescription>
+      {caveats.length > 0 && (
+        <Tile delay={300} className="col-span-full lg:col-span-6">
+          <CardHeader>
+            <TileLabel icon={<TriangleAlert className="size-3" />}>
+              Caveats
+            </TileLabel>
+          </CardHeader>
+          <CardContent className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {caveats.map(({ lang, warning }, i) => (
+              <Alert key={`${lang.code}-${i}`} variant="warning">
+                <TriangleAlert />
+                <AlertTitle>{lang.name}</AlertTitle>
+                <AlertDescription>{warning}</AlertDescription>
               </Alert>
-            </>
-          )}
-        </CardContent>
-      </Tile>
+            ))}
+          </CardContent>
+        </Tile>
+      )}
     </>
   );
 }
