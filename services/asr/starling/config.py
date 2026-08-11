@@ -35,6 +35,9 @@ class Settings:
         "STARLING_WHISPER_MODEL", "mlx-community/whisper-large-v3-mlx"
     )
     tts_model: str = _env("STARLING_TTS_MODEL", "k2-fsa/OmniVoice")
+    # Runs through MLX on the GPU. Small on purpose: it only has to rephrase
+    # retrieved passages, and it shares 16 GB with the speech models.
+    llm_model: str = _env("STARLING_LLM_MODEL", "mlx-community/Qwen2.5-3B-Instruct-4bit")
 
     host: str = _env("STARLING_HOST", "127.0.0.1")
     port: int = _env_int("STARLING_PORT", 8000)

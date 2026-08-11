@@ -24,7 +24,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from . import languages, models, pipeline
+from . import chat, languages, models, pipeline
 from .config import settings
 
 logging.basicConfig(
@@ -156,6 +156,40 @@ def get_audio(name: str) -> FileResponse:
     if not path.is_file() or path.suffix != ".wav":
         raise HTTPException(status_code=404, detail=f"No such audio: {name}")
     return FileResponse(path, media_type="audio/wav")
+
+
+@app.post("/chat")
+def chat_endpoint(
+    question: str = Form(...),
+    language: str = Form("en"),
+) -> dict[str, Any]:
+    """Answer a question from the offline knowledge base.
+
+    Grounded by construction: when retrieval finds nothing, the language model
+    is never called and a fixed refusal comes back with grounded=false.
+    """
+    try:
+        result, timings = chat.answer(question, language)
+        return {
+            "result": {
+                "text": result.text,
+                "grounded": result.grounded,
+                "language": result.language,
+                "warnings": result.warnings,
+                "sources": [
+                    {
+                        "id": s.id,
+                        "title": s.title,
+                        "sector": s.sector,
+                        "score": s.score,
+                    }
+                    for s in result.sources
+                ],
+            },
+            "timings": timings.as_dict(),
+        }
+    except Exception as exc:
+        raise _fail(exc) from exc
 
 
 @app.post("/unload")
