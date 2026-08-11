@@ -323,6 +323,36 @@ button { font: inherit; color: inherit; }
   color: var(--muted-foreground);
 }
 
+/* --- listen ------------------------------------------------------------- */
+
+.speak-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 7px;
+  flex-wrap: wrap;
+}
+.speak {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 11px 4px 9px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+  /* The caption cycles through "Listen" / "Synthesising… 14s" / "Stop", and
+     without a floor the button resizes on every tick. */
+  min-width: 9.5em;
+  justify-content: center;
+}
+.speak:hover:not(:disabled) { background: var(--accent); color: var(--foreground); }
+.speak:disabled { cursor: default; opacity: 0.75; }
+.speak-note { font-size: 10.5px; color: var(--warning); flex: 1; min-width: 0; }
+
 /* --- the activity trace ------------------------------------------------- */
 /*
  * Collapsed by default. An agent that acts invisibly cannot be supervised,
@@ -433,6 +463,33 @@ button { font: inherit; color: inherit; }
 }
 .confirm button.yes:hover { opacity: 0.9; }
 .confirm button:disabled { opacity: 0.45; cursor: default; }
+
+/* A value the model is not allowed to see. Neutral rather than amber: this
+   is not a warning, it is the safe path -- the number goes to the page and
+   nowhere else. */
+.confirm.secret {
+  border-color: var(--border);
+  background: color-mix(in oklch, var(--muted) 70%, transparent);
+}
+.secret-form { display: flex; gap: 7px; flex-wrap: wrap; }
+.secret-input {
+  flex: 1;
+  min-width: 9rem;
+  font: inherit;
+  font-size: 12.5px;
+  letter-spacing: 0.06em;
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.secret-input:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.secret-note {
+  margin: 9px 0 0 !important;
+  font-size: 10.5px;
+  color: var(--success);
+}
 
 /* --- translation progress ----------------------------------------------- */
 

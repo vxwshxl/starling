@@ -308,7 +308,28 @@ Three things about it that are decisions rather than details:
    A ref it invents is rejected twice — by `agent.validate()` on the service
    and by `resolve()` in the page. It cannot write a selector, so it cannot
    click something nobody enumerated. Twelve-step cap, three-repeat stall
-   detection, and a refusal list for passwords/payments/deletions.
+   detection.
+
+**Everything that guards the agent is structural, never prompted**, and each
+guard exists because prompting was tried first and measured to fail:
+
+| Guard | Why it is not a prompt rule |
+|---|---|
+| `type` on a link/button → coerced to `click` | Told "e2 is a button, not a text field", Qwen2.5-3B replied `type` again with no text at all. It types a button's own name into the button. Interpreting beats refusing. |
+| `type` into an Aadhaar/OTP/captcha/PAN field → converted to `ask` | The value must never exist in a model's output. A hallucinated 12-digit number must be unable to reach UIDAI. The panel collects it and types it directly. |
+| Sensitive click → confirmation | `SENSITIVE` is a regex, not substrings: "place order" missed Amazon's actual **"Place your order"**, i.e. the one button it existed for. |
+| `type` + Enter into a message box → confirmation quoting the text | WhatsApp sends on Enter, not on a click. Gating only the Send button let a message go out unapproved. |
+| Known task + wrong host → deterministic navigate, no model call | On a blank tab the model produced no valid action at all; and a *guessed* government URL is how somebody types their Aadhaar into a lookalike. `tasks.py` owns the URL and a dot-boundary host allow-list. |
+
+`agent.redact()` and its twin in `panel.js` strip identifier-shaped digit runs
+from logs and from the chat history on both sides.
+
+4. **Questions do not go through the action prompt.** `POST /page/ask` has its
+   own prompt with no action vocabulary in it. Measured: asked to explain
+   eligibility from page text that plainly contained the answer, the action
+   prompt kept replying `click`, through three rewordings. The problem was not
+   the wording — a prompt whose last section is a list of things to click will
+   click. Routing is a regex (`looksLikeQuestion`), so it costs nothing.
 
 **Page translation is honest about its cost, and the numbers are measured** —
 29 segments of a real government page, English to Assamese, warm:

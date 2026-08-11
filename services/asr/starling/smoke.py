@@ -316,6 +316,65 @@ def _confirmation_gate() -> str:
     return f"{len(must_confirm)} gated, {len(must_not)} allowed through, terminal set correct"
 
 
+def _identifier_handling() -> str:
+    """The model must never produce an Aadhaar number, a captcha or an OTP.
+
+    This is the privacy property of the Aadhaar flow, and it is structural
+    rather than prompted: a `type` into a field the service recognises as an
+    identifier is converted into an `ask`, so the value is collected by the
+    panel and typed straight into the page. If this check ever fails, a
+    hallucinated twelve-digit number can be submitted to UIDAI.
+    """
+    from . import tasks
+    from .agent import redact, validate
+
+    refs = {
+        "e1": {"name": "Aadhaar Number", "role": "input:text"},
+        "e2": {"name": "Enter Captcha", "role": "input:text"},
+        "e3": {"name": "Enter OTP", "role": "input:text"},
+        "e4": {"name": "Search", "role": "input:search"},
+        "e5": {"name": "Type a message", "role": "textbox"},
+    }
+    secret = validate({"action": "type", "ref": "e1", "text": "123412341234"}, refs)
+    assert secret.action == "ask" and secret.needs == "secret", secret
+    assert "123412341234" not in secret.message_en, "the number leaked into the message"
+
+    for ref in ("e2", "e3"):
+        human = validate({"action": "type", "ref": ref, "text": "1234"}, refs)
+        assert human.action == "ask" and human.needs == "human", (ref, human)
+
+    # An ordinary search box is untouched, or the agent could never type.
+    assert validate({"action": "type", "ref": "e4", "text": "shoes"}, refs).action == "type"
+
+    # Enter in a message box IS sending, so it is confirmed and quotes the text.
+    sending = validate(
+        {"action": "type", "ref": "e5", "text": "How is it going?", "submit": True}, refs
+    )
+    assert sending.needs_confirmation, "sending a message must be confirmed"
+    assert "How is it going?" in sending.message_en, "confirm without showing the text"
+    assert not validate(
+        {"action": "type", "ref": "e5", "text": "draft", "submit": False}, refs
+    ).needs_confirmation, "typing a draft is not sending"
+
+    assert redact("aadhaar 1234 5678 9012") == "aadhaar [redacted-12-digit]"
+    assert redact("order 42 arrived") == "order 42 arrived", "over-redacting ordinary numbers"
+
+    # Recipes, and the host allow-list that stops an Aadhaar number being
+    # typed into a lookalike domain.
+    aadhaar = tasks.match("download my aadhaar card")
+    assert aadhaar and "Aadhaar" in aadhaar.name, aadhaar
+    assert tasks.match("message ramesh on whatsapp"), "whatsapp recipe not matched"
+    assert tasks.match("what is the weather today") is None, "matched an ordinary goal"
+    assert tasks.host_allowed(aadhaar, "https://myaadhaar.uidai.gov.in/x")
+    for phish in ("https://uidai.gov.in.phish.example/z", "https://evil.com/uidai.gov.in"):
+        assert not tasks.host_allowed(aadhaar, phish), f"allow-list let through {phish}"
+
+    return (
+        f"{len(tasks.TASKS)} recipes, identifiers withheld from the model, "
+        "captcha/OTP handed to the user, send confirmed with the text shown"
+    )
+
+
 def _extension_manifest() -> str:
     """The Chrome extension's manifest, and that every file it names exists.
 
@@ -374,6 +433,7 @@ def main() -> int:
     check("page translation filters", _page_filters)
     check("agent action contract", _agent_contract)
     check("purchase confirmation gate", _confirmation_gate)
+    check("identifiers and known tasks", _identifier_handling)
     check("chrome extension wiring", _extension_manifest)
 
     print()

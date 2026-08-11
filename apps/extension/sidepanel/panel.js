@@ -17,6 +17,7 @@ import {
   MAX_STEPS,
   detectRestoreIntent,
   detectTranslateIntent,
+  fillSecret as fillSecretIn,
   looksLikeQuestion,
   readPage,
   restoreTranslation,
@@ -131,23 +132,121 @@ function startBotTurn() {
       li.querySelector("div").append(el("div", "outcome", text));
     },
     /** Replace the live trace with a settled summary and attach the answer. */
-    finish(summaryText, answer, answerEn) {
+    finish(summaryText, answer, answerEn, language) {
       spinner.remove();
       label.textContent = summaryText;
       if (!count) trace.hidden = true;
       if (answer) {
         const bubble = el("div", "bubble", answer);
-        const wrap = el("div", "msg bot");
-        wrap.append(bubble);
         if (answerEn && answerEn !== answer) {
           bubble.append(el("p", "original", answerEn));
         }
-        msg.append(wrap.firstChild);
+        msg.append(bubble);
         msg.classList.remove("plain");
+        if (language) addSpeakButton(msg, answer, language);
       }
       scrollDown();
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Speaking an answer
+// ---------------------------------------------------------------------------
+//
+// OmniVoice, through POST /tts, in the language the answer is written in.
+//
+// It is a button and never automatic, and the reason is the measured cost:
+// local synthesis on this machine runs about 6x real time, so a twelve-
+// sentence answer -- which is now the normal length -- is minutes of CPU. The
+// button says so before you press it, and the elapsed time is shown while it
+// works so a long wait looks like work rather than a hang. If that is too
+// slow for a demo, STARLING_TTS_BACKEND=modal is ~3 s warm; it does not clone
+// the voice and the text leaves the machine, which the service flags back to
+// us in `warnings` and which is surfaced here rather than buried.
+
+const SPEAKER_PATH =
+  "M11 5 6 9H2v6h4l5 4V5Z M15.5 8.5a5 5 0 0 1 0 7 M19 5a9 9 0 0 1 0 14";
+
+function speakerIcon() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "13");
+  svg.setAttribute("height", "13");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "2");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  for (const d of SPEAKER_PATH.trim().split(" M")) {
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", d.startsWith("M") ? d : `M${d}`);
+    svg.append(path);
+  }
+  return svg;
+}
+
+/** Attach a "Listen" control to a finished answer. */
+function addSpeakButton(container, text, language) {
+  if (!text || !text.trim()) return;
+
+  const row = el("div", "speak-row");
+  const button = el("button", "speak");
+  button.type = "button";
+  const caption = el("span", "", "Listen");
+  button.append(speakerIcon(), caption);
+  const note = el("span", "speak-note", "");
+  row.append(button, note);
+
+  let audio = null;
+  let ticker = null;
+
+  const reset = (label) => {
+    clearInterval(ticker);
+    caption.textContent = label;
+    button.disabled = false;
+  };
+
+  button.addEventListener("click", async () => {
+    // Second press stops playback rather than queueing another synthesis.
+    if (audio && !audio.paused) {
+      audio.pause();
+      audio.currentTime = 0;
+      reset("Listen");
+      return;
+    }
+    if (audio) {
+      audio.play();
+      reset("Stop");
+      return;
+    }
+
+    button.disabled = true;
+    note.textContent = "";
+    const started = Date.now();
+    caption.textContent = "Synthesising…";
+    ticker = setInterval(() => {
+      caption.textContent = `Synthesising… ${Math.round((Date.now() - started) / 1000)}s`;
+    }, 1000);
+
+    try {
+      const { result } = await client.speak(text, language);
+      audio = new Audio(client.audioUrl(result.audio_path));
+      audio.addEventListener("ended", () => reset("Listen again"));
+      await audio.play();
+      reset("Stop");
+      // The service attaches a caveat when synthesis was not local -- that
+      // the voice is not cloned and the text left the machine. Both of
+      // Starling's headline claims are false in that mode, so it is shown,
+      // not swallowed.
+      if (result.warnings?.length) note.textContent = result.warnings.join(" ");
+    } catch (err) {
+      reset("Listen");
+      showError(err);
+    }
+  });
+
+  container.append(row);
 }
 
 function describeAction(decision) {
@@ -342,7 +441,7 @@ async function doTranslate(turn, target) {
   turn.msg.append(card);
   scrollDown();
 
-  let total = 0;
+  let deferred = 0;
   await runTranslation({
     tabId: state.tabId,
     client,
@@ -351,8 +450,10 @@ async function doTranslate(turn, target) {
     shouldStop: () => state.stopRequested,
     onEvent(event) {
       if (event.type === "collected") {
-        total = event.total;
-        heading.textContent = `${total} segments`;
+        deferred = event.deferred;
+        heading.textContent = deferred
+          ? `${event.total} on screen, ${deferred} as you scroll`
+          : `${event.total} segments`;
       } else if (event.type === "progress") {
         const p = Math.round((event.done / Math.max(event.total, 1)) * 100);
         fill.style.width = `${p}%`;
@@ -366,6 +467,14 @@ async function doTranslate(turn, target) {
         state.translated = true;
         fill.style.width = "100%";
         pct.textContent = event.stopped ? "stopped" : "100%";
+        // Keep the card addressable so scroll-triggered work can keep the
+        // running total honest instead of leaving it frozen at the first pass.
+        state.liveCard = {
+          counts,
+          heading,
+          totals: { ...event.counts },
+          deferred,
+        };
       }
     },
   });
@@ -388,6 +497,109 @@ async function doTranslate(turn, target) {
     `Translated into ${language ? language.name : target}`,
     null,
   );
+}
+
+/** Anything shaped like an identifier, blanked before it is stored.
+ *
+ *  The same rule as agent.redact() on the service, applied on this side too,
+ *  because the conversation array is assembled here and is what gets sent
+ *  back to the model on every subsequent turn. A number that reaches it is a
+ *  number the model sees for the rest of the session. */
+const redact = (text) =>
+  (text || "")
+    .replace(/\b\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g, "[redacted]")
+    .replace(/\b\d{9,19}\b/g, "[redacted]");
+
+/** Collect a value the model must never see, and type it into the page.
+ *
+ *  This is the whole privacy design for the Aadhaar flow. The service refuses
+ *  to let the model produce a value for a field it recognises as an
+ *  identifier -- it returns `ask` with needs="secret" and the ref instead --
+ *  and the value the user types here goes straight to the content script.
+ *  It is never sent to /agent/act, never written to the transcript, never
+ *  logged, and is dropped from memory as soon as it has been typed.
+ */
+function askSecret(decision, goal, resume) {
+  const box = el("div", "confirm secret");
+  box.append(el("p", "", decision.message || "I need a value for this field."));
+
+  const form = el("form", "secret-form");
+  const input = document.createElement("input");
+  input.type = "password";
+  input.className = "secret-input";
+  input.autocomplete = "off";
+  input.placeholder = "Type it here";
+  input.setAttribute("aria-label", "Value to type into the page");
+
+  const submit = el("button", "yes", "Fill it in");
+  submit.type = "submit";
+  const cancel = el("button", "", "Cancel");
+  cancel.type = "button";
+  form.append(input, submit, cancel);
+  box.append(form);
+  box.append(el("p", "secret-note", "Typed straight into the page. Not sent to the model, not kept in this chat."));
+
+  const settle = (text) => {
+    form.remove();
+    box.append(el("p", "original", text));
+    scrollDown();
+  };
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const value = input.value;
+    input.value = "";
+    if (!value) return;
+    submit.disabled = cancel.disabled = true;
+    try {
+      await fillSecretIn(state.tabId, decision.args.ref, value);
+      settle("Filled in.");
+      // What the model is told. Deliberately not the value.
+      state.conversation.push({ role: "assistant", text: "The user supplied that value; it is now in the field." });
+      resume(true);
+    } catch (err) {
+      settle("Could not fill that field.");
+      showError(err);
+      resume(false);
+    }
+  });
+  cancel.addEventListener("click", () => {
+    settle("Cancelled.");
+    resume(false);
+  });
+
+  ui.thread.append(box);
+  input.focus();
+  scrollDown();
+}
+
+/** A captcha or an OTP: the user does it in the page, then says go on. */
+function askHuman(decision, resume) {
+  const box = el("div", "confirm");
+  box.append(el("p", "", decision.message || "Please do this step in the page yourself."));
+  const row = el("div", "row");
+  const go = el("button", "yes", "Done — carry on");
+  const stop = el("button", "", "Stop here");
+  row.append(go, stop);
+  box.append(row);
+
+  const settle = (text) => {
+    go.disabled = stop.disabled = true;
+    box.append(el("p", "original", text));
+    scrollDown();
+  };
+  go.addEventListener("click", () => {
+    settle("Carrying on.");
+    state.conversation.push({ role: "assistant", text: "The user completed that step in the page." });
+    resume(true);
+  });
+  stop.addEventListener("click", () => {
+    settle("Stopped.");
+    resume(false);
+  });
+
+  ui.thread.append(box);
+  scrollDown();
 }
 
 /** Render a confirmation and resume the run if the user says yes. */
@@ -437,7 +649,7 @@ async function doAsk(question, turn) {
     title: page.title,
     language: target.value,
   });
-  turn.finish("Read the page", result.message, result.message_en);
+  turn.finish("Read the page", result.message, result.message_en, target.value);
   state.conversation.push({ role: "assistant", text: result.message_en || result.message });
 }
 
@@ -496,9 +708,36 @@ async function doAgent(goal, turn, { preapproved = null } = {}) {
   }
 
   const decision = result.decision;
+
+  // The service withheld a field from the model: an identifier it must not
+  // produce, or a captcha/OTP that needs a person. Both pause here and
+  // continue the same goal once the user has dealt with it.
+  if (decision?.needs === "secret" || decision?.needs === "human") {
+    turn.finish(summary, null);
+    const carryOn = async (ok) => {
+      if (!ok) return;
+      const next = startBotTurn();
+      setBusy(true);
+      try {
+        await doAgent(goal, next);
+      } catch (err) {
+        next.finish("Stopped", null);
+        showError(err);
+      } finally {
+        setBusy(false);
+      }
+    };
+    if (decision.needs === "secret") askSecret(decision, goal, carryOn);
+    else askHuman(decision, carryOn);
+    return;
+  }
+
   if (decision?.message) {
-    turn.finish(summary, decision.message, decision.message_en);
-    state.conversation.push({ role: "assistant", text: decision.message_en || decision.message });
+    turn.finish(summary, decision.message, decision.message_en, target.value);
+    state.conversation.push({
+      role: "assistant",
+      text: redact(decision.message_en || decision.message),
+    });
     if (decision.action === "ask") ui.input.focus();
   } else if (result.reason === "cap") {
     turn.finish(summary, `I stopped after ${MAX_STEPS} steps without finishing. Tell me the next step and I will carry on.`);
@@ -531,7 +770,10 @@ async function send() {
   }
 
   addMessage("user", text);
-  state.conversation.push({ role: "user", text });
+  // Redacted before storing: if someone pastes their Aadhaar number into the
+  // chat rather than into the masked field, it must not then ride along in
+  // every subsequent prompt for the rest of the session.
+  state.conversation.push({ role: "user", text: redact(text) });
   ui.input.value = "";
   ui.input.style.height = "auto";
 
@@ -725,12 +967,29 @@ ui.cache.addEventListener("click", async () => {
 chrome.runtime.onMessage.addListener((message, sender) => {
   if (message?.type !== "sl:new-segments") return;
   if (!state.translated || sender.tab?.id !== state.tabId) return;
+
+  const card = state.liveCard;
+  if (card) card.heading.textContent = `translating ${message.segments.length} more…`;
+
   translateNewSegments({
     tabId: state.tabId,
     client,
     segments: message.segments,
     source: "en",
     target: target.value,
+    onCounts(counts) {
+      if (!card) return;
+      for (const key of Object.keys(card.totals)) card.totals[key] += counts[key] || 0;
+      card.deferred = Math.max(0, card.deferred - message.segments.length);
+      card.heading.textContent = card.deferred
+        ? `${card.deferred} more as you scroll`
+        : "whole page translated";
+      card.counts.replaceChildren(
+        el("span", "", "translated "), el("b", "", String(card.totals.translated)),
+        el("span", "", " · cached "), el("b", "", String(card.totals.from_cache)),
+        el("span", "", " · skipped "), el("b", "", String(card.totals.skipped)),
+      );
+    },
   }).catch(showError);
 });
 

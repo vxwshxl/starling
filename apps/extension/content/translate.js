@@ -71,10 +71,27 @@
     seen: new WeakSet(), // text nodes already collected, so re-collect is cheap
     active: false,
     target: null,
-    observer: null,
-    pending: [],        // ids found by the observer, not yet reported
+    observer: null,     // MutationObserver, for content the page adds later
+    viewport: null,     // IntersectionObserver, for content further down
+    deferred: new Map(),// element -> [item], waiting to be scrolled near
+    pending: [],        // ids to report to the panel, not yet sent
     notifyTimer: null,
   };
+
+  /** How much of the page is translated before the user does anything.
+   *
+   *  This is THE speed dial, and it is not the model's speed -- that is fixed
+   *  at roughly 2.4 segments a second. A 160-segment page translated in one
+   *  pass is about a minute of waiting; the same page with only what is on
+   *  screen plus one screen of runway is nine seconds, and the rest arrives
+   *  as it is scrolled to.
+   *
+   *  It also removes the reason the old behaviour felt broken. Sending every
+   *  segment at once meant the bottom of the page sat in English for a whole
+   *  minute while the progress bar claimed to be working, so scrolling during
+   *  a run looked like the translation had quietly given up. Now scrolling is
+   *  what causes the work, and it happens where the user is looking. */
+  const RUNWAY = 1.5; // screens below the fold translated up front
 
   // ---------------------------------------------------------------------
   // Collection
@@ -306,6 +323,69 @@
     return measured.map((m) => m.item);
   }
 
+  /** Split into "translate now" and "translate when scrolled to".
+   *
+   *  Tier 0 and 1 from `prioritise` are the screen and its runway. Tier 2 is
+   *  further down the page and tier 3 is inside something not currently
+   *  displayed -- a closed menu, an unopened dialog. Neither is worth a
+   *  minute of the user's time before they have asked to see it.
+   */
+  function partition(items) {
+    const height = window.innerHeight || 800;
+    const limit = height * (1 + RUNWAY);
+    const now = [];
+    const later = [];
+    for (const item of items) {
+      const element = item.kind === "run" ? item.nodes[0].parentElement : item.node;
+      const rect = element?.getBoundingClientRect?.();
+      const visible = rect && (rect.width || rect.height);
+      if (visible && rect.top < limit) now.push(item);
+      else later.push(item);
+    }
+    return { now, later };
+  }
+
+  /** Watch deferred content and report it as it comes into range.
+   *
+   *  rootMargin gives a screen of lead time, so text is requested before it
+   *  is actually on screen and has a chance to land before the user reads it.
+   *  Observing the PARENT element rather than the text node because
+   *  IntersectionObserver only takes elements, and several runs commonly
+   *  share one parent -- hence the element -> [items] map.
+   */
+  function startViewportWatch(items) {
+    if (!items.length) return;
+    state.viewport = new IntersectionObserver(
+      (entries) => {
+        const ready = [];
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const waiting = state.deferred.get(entry.target);
+          if (!waiting) continue;
+          ready.push(...waiting.map((item) => item.id));
+          state.deferred.delete(entry.target);
+          state.viewport.unobserve(entry.target);
+        }
+        if (ready.length) {
+          state.pending.push(...ready);
+          scheduleNotify();
+        }
+      },
+      { rootMargin: `${Math.round((window.innerHeight || 800))}px 0px` },
+    );
+
+    for (const item of items) {
+      const element = item.kind === "run" ? item.nodes[0].parentElement : item.node;
+      if (!element) continue;
+      const list = state.deferred.get(element);
+      if (list) list.push(item);
+      else {
+        state.deferred.set(element, [item]);
+        state.viewport.observe(element);
+      }
+    }
+  }
+
   // ---------------------------------------------------------------------
   // Writing back
   // ---------------------------------------------------------------------
@@ -354,6 +434,12 @@
       state.observer.disconnect();
       state.observer = null;
     }
+    if (state.viewport) {
+      state.viewport.disconnect();
+      state.viewport = null;
+    }
+    state.deferred.clear();
+    state.pending.length = 0;
     let restored = 0;
     for (const item of state.items) {
       if (!item.applied) continue;
@@ -479,12 +565,17 @@
         state.target = message.target || null;
         document.documentElement.setAttribute("data-starling-language", state.target || "");
         const items = prioritise(collectFrom(document.body));
+        const { now, later } = partition(items);
         if (message.watch !== false) startObserver();
+        startViewportWatch(later);
         sendResponse({
           ok: true,
           title: document.title,
           url: location.href,
-          segments: items.map((item) => ({ id: item.id, text: item.source })),
+          // `deferred` is reported so the panel can say "the rest arrives as
+          // you scroll" rather than showing 40 of 160 and looking truncated.
+          deferred: later.length,
+          segments: now.map((item) => ({ id: item.id, text: item.source })),
         });
         return false;
       }

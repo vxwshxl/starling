@@ -33,7 +33,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from . import languages, llm, translate
+from . import languages, llm, tasks, translate
 from .timing import Timings
 
 logger = logging.getLogger("starling.agent")
@@ -85,6 +85,39 @@ ACTIONS: dict[str, tuple[str, ...]] = {
     "fail": ("message",),
 }
 
+#: Numbers that must never pass through the model, a log line, or the chat
+#: transcript. An Aadhaar number is the case this exists for: the agent's job
+#: on the UIDAI flow is to find the right field and hand over, not to carry
+#: the number around. `redact` is applied to everything that leaves this
+#: module for a log, and the extension applies the same rule before adding a
+#: turn to the conversation.
+_AADHAAR = re.compile(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}\b")
+_LONG_DIGITS = re.compile(r"\b\d{9,19}\b")
+
+
+def redact(text: str) -> str:
+    """Blank out anything shaped like an identifier or a card number."""
+    if not text:
+        return text
+    out = _AADHAAR.sub("[redacted-12-digit]", text)
+    return _LONG_DIGITS.sub("[redacted-number]", out)
+
+
+#: Field names that mean "the user types this, not the model".
+#:
+#: Two different reasons, and they need different handling. A captcha or an
+#: OTP is designed to require a human and pretending otherwise would be a lie;
+#: an Aadhaar or account number is something the user HAS, but routing it
+#: through a language model to get it into a text box is gratuitous exposure.
+#: Both end the run with `ask`; the extension collects the value and types it
+#: into the page directly, so it never reaches the model at all.
+SECRET_FIELDS = re.compile(
+    r"aadhaar|aadhar|uidai|\bvid\b|\bpan\b|passport|account\s*(?:no|number)|"
+    r"\botp\b|one[\s-]?time|captcha|password|passcode|\bcvv\b|\bpin\b|"
+    r"card\s*(?:no|number)",
+    re.IGNORECASE,
+)
+
 #: Actions that end a run and hand control back to the user.
 #:
 #: `ask` is here rather than suspending the loop mid-flight, and that is a
@@ -125,8 +158,27 @@ SENSITIVE = re.compile(
     | \b(?:send|post|publish|tweet|submit)\s+(?:the\s+|your\s+|this\s+)?
         (?:message|reply|comment|review|post|application)
     | \b(?:transfer|withdraw|send)\s+(?:money|funds|₹|rs\.?\s*\d)
+    # A bare "Send". WhatsApp Web's send control is labelled exactly that, and
+    # the phrase-based patterns above all sailed past it. "Send" on its own
+    # essentially always means transmitting something to another person, so
+    # the whole-label form is safe to gate; "Send" inside a longer label
+    # ("Resend code", "Sender name") is not matched.
+    | ^\s*send\s*$
     """,
     re.IGNORECASE | re.VERBOSE,
+)
+
+#: Fields where pressing Enter transmits something to another person.
+#:
+#: This closes a hole the click gate cannot see. On WhatsApp Web the message
+#: is sent by Enter, not by clicking anything, so `type` with submit=true is
+#: the whole action -- gating only the Send button would have let the agent
+#: deliver a message nobody approved. Matched on the field's label and
+#: placeholder ("Type a message"), and the confirmation quotes the exact text.
+MESSAGE_FIELDS = re.compile(
+    r"type\s+a\s+message|message\b|write\s+(?:a\s+)?(?:reply|comment|post)|"
+    r"what'?s\s+on\s+your\s+mind|tweet|compose",
+    re.IGNORECASE,
 )
 
 SYSTEM_PROMPT = """You are Starling, an assistant that operates a web browser for a user who may not read English. You are shown the current page and a numbered list of the elements on it, and you choose ONE action at a time. This is a conversation: the user can follow up, and "it" or "that one" refers to what was being discussed earlier.
@@ -188,6 +240,14 @@ class Decision:
     Set here rather than left to the client, because the client that forgets
     to check it is the one that silently places an order."""
 
+    needs: str = ""
+    """What the extension must collect from the user before going on.
+
+    "" for an ordinary step. "secret" means render a masked field and type the
+    value straight into `args.ref` without it ever reaching the model or the
+    transcript. "human" means the user has to do it in the page themselves --
+    a captcha, an OTP -- and the agent waits."""
+
     target_label: str = ""
     """The accessible name of the element this action targets.
 
@@ -212,6 +272,7 @@ class Decision:
             "message_en": self.message_en,
             "terminal": self.terminal,
             "needs_confirmation": self.needs_confirmation,
+            "needs": self.needs,
             "target_label": self.target_label,
             "language": self.language,
             "goal_en": self.goal_en,
@@ -298,6 +359,7 @@ def build_prompt_body(
     history: list[dict[str, Any]] | None = None,
     text: str = "",
     conversation: list[dict[str, Any]] | None = None,
+    task: Any | None = None,
 ) -> str:
     """The user turn: conversation, goal, page, elements, steps so far.
 
@@ -332,6 +394,12 @@ def build_prompt_body(
         f"GOAL: {goal.strip()}",
         f"\nCURRENT PAGE: {title.strip() or '(untitled)'}\nURL: {url.strip()}",
     ]
+
+    # A recipe, when the goal matches one. The model still reads the real page
+    # -- this only supplies the entry URL and the shape of the flow, which is
+    # exactly what it cannot know and cannot safely guess. See tasks.py.
+    if task is not None:
+        sections.append(f"\n{task.as_hint()}")
     if text.strip():
         sections.append(f"\nPAGE TEXT (extract):\n{text.strip()[:1500]}")
     sections.append(f"\nELEMENTS ON THIS PAGE:\n{listing}")
@@ -520,6 +588,41 @@ def validate(parsed: dict[str, Any], refs: Any) -> Decision:
         if action == "select" and role and role != "select":
             raise ValueError(
                 f"{args['ref']} is a {role}, not a dropdown. Use click instead."
+            )
+
+        # The model wants to put text into a field that identifies the user.
+        # It does not get to. Turned into a request the extension fulfils by
+        # typing the value straight into the page, so an Aadhaar number never
+        # passes through the model, the log, or the chat transcript -- and so
+        # a model that hallucinated a plausible twelve-digit number cannot
+        # submit it. A captcha or an OTP is handed back to the user entirely,
+        # because those are meant to require a person.
+        if action == "type" and SECRET_FIELDS.search(
+            f"{decision.target_label} {entry.get('placeholder', '') if isinstance(entry, dict) else ''}"
+        ):
+            label = decision.target_label.strip() or "this field"
+            human = re.search(r"otp|one[\s-]?time|captcha", label, re.IGNORECASE)
+            decision.action = "ask"
+            decision.needs = "human" if human else "secret"
+            decision.args = {"ref": args["ref"]}
+            decision.message_en = decision.message = (
+                f'Please type the {label} into the page yourself — I do not '
+                "handle codes like that. Tell me when you have done it."
+                if human
+                else f'I need the {label} to fill in. It goes straight into the '
+                "page and is never sent to the model or kept in this chat."
+            )
+            logger.info("withheld a %s field from the model: %s", decision.needs, label)
+            return decision
+
+        # Typing into a message box and pressing Enter IS sending the message.
+        # Gated with the text quoted in full, because "shall I send this?"
+        # without showing what "this" says is not consent.
+        haystack = f"{decision.target_label} {entry.get('placeholder', '') if isinstance(entry, dict) else ''}"
+        if action == "type" and args.get("submit") and MESSAGE_FIELDS.search(haystack):
+            decision.needs_confirmation = True
+            decision.message_en = decision.message = (
+                f'This will send: "{args["text"]}"\n\nShall I send it?'
             )
 
         if action == "click" and is_sensitive(decision.target_label):
@@ -747,6 +850,37 @@ def decide(
         for el in elements
         if el.get("ref")
     }
+    # A recipe for the well-known flows -- Aadhaar download, PM-KISAN, a
+    # WhatsApp message. Supplies the entry URL and the shape of the flow,
+    # which is exactly what a 3B model cannot know and must not guess: a
+    # guessed government URL is how somebody ends up typing their Aadhaar
+    # number into a lookalike site.
+    task = tasks.match(goal_en)
+    if task is not None:
+        logger.info("matched known task: %s", task.name)
+
+        # Getting to the official page is not a decision worth asking a 3B
+        # model to make, and asking it is actively worse than not: measured on
+        # a blank tab with a Bodo goal, it failed to produce any valid action
+        # at all and the run died before it started. Worse, the failure mode
+        # when it DOES answer is a guessed government URL, which is precisely
+        # how somebody ends up typing an Aadhaar number into a lookalike site.
+        #
+        # So when a recipe matched and we are not already on one of its
+        # permitted hosts, navigate there directly. No model call, no guess,
+        # and the destination comes from tasks.py rather than from generation.
+        if not tasks.host_allowed(task, url):
+            decision = Decision(
+                action="navigate",
+                args={"url": task.url},
+                why=f"opening the official page for {task.name}",
+                language=lang,
+                goal_en=goal_en,
+                warnings=warnings,
+            )
+            logger.info("routing to %s for %s", task.url, task.name)
+            return decision, timings
+
     body = build_prompt_body(
         goal_en,
         url=url,
@@ -755,6 +889,7 @@ def decide(
         history=history,
         text=text,
         conversation=conversation,
+        task=task,
     )
 
     with timings.stage("decide"):
@@ -771,10 +906,13 @@ def decide(
         with timings.stage("translate_out"):
             decision.message = translate.from_english(decision.message_en, lang)
 
+    # Redacted: `args` carries whatever the model chose to type, and on the
+    # Aadhaar flow that must never reach a log file even though the field
+    # interception above means it should never contain a real number.
     logger.info(
         "agent step: %s %s -- %s",
         decision.action,
-        decision.args,
-        decision.why[:80],
+        redact(str(decision.args)),
+        redact(decision.why[:80]),
     )
     return decision, timings

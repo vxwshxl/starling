@@ -54,7 +54,14 @@ export async function runTranslation({
 }) {
   const collected = await call(tabId, TRANSLATE_SCRIPT, { type: "sl:collect", target });
   const segments = collected.segments || [];
-  onEvent({ type: "collected", total: segments.length, title: collected.title });
+  onEvent({
+    type: "collected",
+    total: segments.length,
+    // Everything below the runway. Reported so the panel can say the rest is
+    // coming rather than showing a total that looks like the whole page.
+    deferred: collected.deferred || 0,
+    title: collected.title,
+  });
 
   const totals = { translated: 0, from_cache: 0, skipped: 0, total: 0 };
   let done = 0;
@@ -91,12 +98,20 @@ export async function runTranslation({
  *
  *  Same path, no re-walk: the content script already registered these and
  *  gave them ids, so this is only the fetch-and-apply half. */
-export async function translateNewSegments({ tabId, client, segments, source = "en", target }) {
+export async function translateNewSegments({
+  tabId,
+  client,
+  segments,
+  source = "en",
+  target,
+  onCounts = () => {},
+}) {
   const applied = [];
   for (const group of chunk(segments)) {
     const response = await client.translateBatch(group.map((s) => s.text), { source, target });
     const updates = group.map((segment, i) => [segment.id, response.result.translations[i]]);
     await send(tabId, { type: "sl:apply", updates });
+    onCounts(response.result.counts);
     applied.push(...updates);
   }
   return applied.length;
@@ -133,6 +148,38 @@ export function detectTranslateIntent(text, languages) {
       clean.includes(l.native_name.toLowerCase()),
   );
   return { target: named ? named.code : null };
+}
+
+/** Type a value into one field, without the model ever seeing it.
+ *
+ *  Used for the identifiers the service refuses to let the model produce --
+ *  an Aadhaar number, an account number. The value goes from the panel's
+ *  input straight to the content script and into the page. It is never part
+ *  of an /agent/act payload.
+ *
+ *  The page is re-indexed first and the ref must still be a text field, for
+ *  the same reason the purchase confirmation re-checks its label: the user
+ *  took time to type, and the page may have moved on. Typing an Aadhaar
+ *  number into whatever now occupies that position is the exact accident
+ *  worth spending a round trip to avoid.
+ */
+export async function fillSecret(tabId, ref, value) {
+  await inject(tabId, AGENT_SCRIPT);
+  const fresh = await send(tabId, { type: "sl:index" });
+  const target = (fresh.elements || []).find((e) => e.ref === ref);
+  if (!target) {
+    throw new Error("That field is no longer on the page — nothing was typed.");
+  }
+  if (!/^input:|^(textbox|searchbox|combobox|textarea)$/.test(target.role || "")) {
+    throw new Error(`${ref} is a ${target.role}, not a text field — nothing was typed.`);
+  }
+  const result = await send(tabId, {
+    type: "sl:execute",
+    action: "type",
+    args: { ref, text: value, submit: false },
+  });
+  if (!result.ok) throw new Error(result.error || "Could not type into that field.");
+  return true;
 }
 
 /** Read the page without acting on it, for answering a question about it. */

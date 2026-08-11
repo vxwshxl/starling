@@ -111,6 +111,35 @@ export function createClient(base = DEFAULT_BASE) {
     /** A long answer about the page, with no action considered. */
     ask: (payload) => request(base, "/page/ask", { method: "POST", body: payload }),
 
+    /** Text -> speech, via OmniVoice. Multipart, not JSON.
+     *
+     *  No reference audio is sent, so this is OmniVoice's default voice
+     *  rather than a clone of the user's. Cloning needs a recording of the
+     *  speaker plus its transcript, and the panel only has one when the user
+     *  actually spoke -- see the note at the call site.
+     *
+     *  Returns the result object; `audio_path` is a filename to fetch from
+     *  /audio/{name}. */
+    async speak(text, language, { backend } = {}) {
+      const form = new FormData();
+      form.append("text", text);
+      form.append("language", language);
+      if (backend) form.append("backend", backend);
+      const response = await fetch(`${base}/tts`, { method: "POST", body: form });
+      if (!response.ok) {
+        let detail = `${response.status} ${response.statusText}`;
+        try {
+          detail = (await response.json()).detail || detail;
+        } catch {
+          /* keep the status */
+        }
+        throw new ApiError(detail, { status: response.status });
+      }
+      return response.json();
+    },
+
+    audioUrl: (name) => `${base}/audio/${name}`,
+
     /** Speech in the user's own language -> text. Multipart, not JSON. */
     async transcribe(blob, language) {
       const form = new FormData();
