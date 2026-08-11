@@ -45,9 +45,17 @@ UI must distinguish them, because `grounded` alone cannot:
 
 `general` is a deliberate loosening: a twenty-passage corpus cannot cover what
 people actually ask, and refusing everything else made the assistant look
-broken. Safety does not loosen with it — `llm.GENERAL_PROMPT` still forbids
-diagnosis, medicine names and dosages, and still routes anything urgent to a
-health centre.
+broken.
+
+**The prompts are deliberately unrestricted.** An earlier version forbade
+naming a medicine or a dose, forbade answering from the model's own knowledge,
+and capped replies at 2–4 sentences. The result was an assistant that told a
+parent whose child had diarrhoea to visit a health centre and gave them
+nothing to do in the meantime — which, when the health centre is hours away,
+is worse than useless. Both prompts now ask for 6–12 sentences, practical
+steps first with real quantities and timings, and escalation advice *after*
+the advice rather than instead of it. If you are re-tightening this, tighten
+what it may say, not how much.
 
 ## Commands
 
@@ -156,8 +164,14 @@ machine, one 5.7 s utterance:
 32 was the old default and is unusable live. Peak held at 0.500 throughout, so
 none of these is the near-silence failure mode above. Set `STARLING_TTS_STEPS=4`
 if the demo needs the speed more than the fidelity — judge that by ear, not by
-RMS. Short answers matter as much as the step count: the prompts cap replies at
-2–4 sentences partly for this reason.
+RMS.
+
+**Length is the other multiplier, and it now dominates.** Cost is linear in
+characters too, so the move to 6–12 sentence answers made local synthesis far
+more expensive: a 1180-character Assamese reply is 84 s of speech, which the
+CPU takes minutes to produce and the Modal GPU takes 34 s. Long answers and
+on-device TTS do not fit together on this machine — demo long answers on the
+cloud backend, or expect to wait.
 
 ### Two synthesis backends, and what the fast one costs
 

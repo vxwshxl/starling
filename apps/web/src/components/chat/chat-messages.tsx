@@ -62,6 +62,32 @@ function Empty({ onPick }: { onPick: (q: string) => void }) {
   );
 }
 
+/**
+ * Roughly how long synthesis will take, so the wait is a number rather than a
+ * hang.
+ *
+ * Both constants are measured on this machine, not guessed. Speech runs about
+ * 14 characters per second of audio (a 1180-character Assamese reply came out
+ * at 83.8 s), and synthesis costs a fixed multiple of the audio length: 6.05x
+ * on the CPU at 8 denoising steps, 0.41x on the Modal GPU. The CPU figure is
+ * the one that matters — a long answer is minutes, and saying "about 30 s"
+ * there, as this used to, is how a user concludes the app has frozen.
+ */
+function synthesisEstimate(chars: number, backend: TTSBackend): string {
+  const audioSeconds = chars / 14;
+  const seconds = Math.round(audioSeconds * (backend === "modal" ? 0.41 : 6.05));
+  if (backend === "modal") {
+    return seconds < 20
+      ? "a few seconds — on the cloud GPU"
+      : `about ${seconds}s — on the cloud GPU`;
+  }
+  if (seconds < 90) return `about ${seconds}s — OmniVoice runs on this CPU`;
+  return `about ${Math.round(seconds / 60)} min on this CPU — switch to Cloud GPU for ~${Math.max(
+    1,
+    Math.round(audioSeconds * 0.41),
+  )}s`;
+}
+
 function Sources({ sources }: { sources: NonNullable<Message["sources"]> }) {
   if (sources.length === 0) return null;
   return (
@@ -184,15 +210,9 @@ function Bubble({
                 )}
                 {message.speaking ? "Synthesising…" : "Speak"}
               </Button>
-              {/* On-device cloning runs at roughly 6x real time, so a
-                  three-sentence answer is half a minute of silence. Saying so
-                  is the difference between waiting and reloading the page.
-                  The cloud path is ~10x faster and needs no such apology. */}
               {message.speaking && (
                 <span className="text-xs text-muted-foreground">
-                  {ttsBackend === "modal"
-                    ? "a few seconds — on the cloud GPU"
-                    : "about 30 s — OmniVoice runs on this CPU"}
+                  {synthesisEstimate(message.text.length, ttsBackend)}
                 </span>
               )}
               {/* A refusal costs a fraction of a millisecond, and "0 ms" next

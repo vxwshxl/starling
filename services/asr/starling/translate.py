@@ -45,10 +45,16 @@ _lock = threading.Lock()
 _model: Any | None = None
 _tokenizer: Any | None = None
 
-#: Ceiling on a single translation. Answers are 2-4 short sentences and
-#: questions are one, so this is generous; it exists to stop a degenerate
-#: repetition loop from running for minutes.
-MAX_TOKENS = 512
+#: Ceiling on a single translation.
+#:
+#: Has to sit well above llm.MAX_TOKENS, not merely match it: Indic scripts
+#: tokenise far less efficiently than English -- Ol Chiki and Meetei Mayek in
+#: particular run several tokens per syllable -- so the same answer needs
+#: noticeably more tokens in Santali than it did in English. Too low and a
+#: long answer is silently cut off mid-sentence, which in the user's language
+#: is invisible to anyone reading the English. This is a runaway guard against
+#: repetition loops, not a length budget.
+MAX_TOKENS = 3072
 
 
 def loaded() -> bool:

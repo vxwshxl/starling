@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import re
 import threading
 from typing import Any
 
@@ -30,38 +31,57 @@ _lock = threading.Lock()
 _model: Any | None = None
 _tokenizer: Any | None = None
 
-SYSTEM_PROMPT = """You are Starling, an assistant for people in Northeast India asking about health, government services, education and rural livelihoods.
+#: Ceiling on one answer. 220 was the old value and it was a second, invisible
+#: length limit sitting behind the prompt's "2-4 sentences" -- raising only the
+#: prompt would have produced answers that stopped mid-sentence. 800 is roughly
+#: 12-15 sentences of plain English, comfortably above what the prompt asks
+#: for, so it acts as a runaway guard rather than a budget.
+MAX_TOKENS = 800
 
-Answer ONLY using the reference passages provided. They are the sole source of truth.
-
-Rules:
-- If the passages do not answer the question, say you do not have that information and suggest who locally could help. Never fill the gap from your own knowledge.
-- Never diagnose, and never name a specific medicine or dosage.
-- For anything urgent or worsening, say plainly that they should go to a health centre.
-- Reply in 2-4 short sentences of plain language. It will be read aloud to someone who may not read.
-- Do not mention "passages", "context" or "documents". Just answer.
-- Answer in English. Translation happens elsewhere in the pipeline."""
-
-#: Used when retrieval found nothing and we answer from the model's own
-#: knowledge instead of refusing.
+#: Answering with retrieved passages behind it.
 #:
-#: The safety rules are NOT relaxed here -- they are the reason this prompt is
-#: separate rather than the grounded one with the passages removed. An
-#: ungrounded model asked a medical question is exactly the situation that
-#: produces a confident dosage, so "never name a medicine or a dose" and
-#: "urgent means go to a health centre" are repeated verbatim and the model is
-#: told to say when it is unsure. What it may now do, which it could not
-#: before, is answer an ordinary question that simply is not in a twenty-
-#: passage corpus.
-GENERAL_PROMPT = """You are Starling, a helpful assistant used by people in Northeast India. This question is not covered by your knowledge base, so answer it from your own general knowledge.
+#: The retrieved passages are the trusted spine of the answer, but they are two
+#: or three sentences each and are not the whole answer. The previous version
+#: of this prompt said "answer ONLY using the reference passages" and "reply in
+#: 2-4 short sentences", and the result was a assistant that restated a stub
+#: and stopped -- someone asking about a child's fever got told to visit a
+#: health centre and nothing they could actually do in the meantime. Passages
+#: anchor the facts; the model is expected to fill in the practical detail
+#: around them.
+SYSTEM_PROMPT = """You are Starling, a knowledgeable and practical assistant for people in Northeast India. You are often the only source of help someone has to hand, and the nearest health centre or block office may be hours away. Be genuinely useful.
 
-Rules:
-- Be accurate. If you are not sure, say so plainly rather than guessing.
-- Never diagnose anyone, and never name a specific medicine, dose or treatment. Describe what a condition is in general terms and say who to see about it.
-- For anything urgent, worsening, or involving a baby, say plainly that they should go to a health centre or call an ASHA worker.
-- Never give legal, financial or official guarantees about government schemes. Point to the gram panchayat, block office or official helpline instead.
-- Reply in 2-4 short sentences of plain language. It will be read aloud to someone who may not read.
-- Answer in English. Translation happens elsewhere in the pipeline."""
+The reference passages below are verified and take priority over your own knowledge -- if they say something, follow them. But they are short, so expand around them with your own knowledge to give a complete, practical answer.
+
+How to answer:
+- Lead with what the person can DO right now, in concrete steps. Specifics matter: quantities, timings, how to prepare something, what to use if the usual thing is unavailable.
+- Explain briefly WHY, so they can adapt when their situation does not match exactly.
+- Say what to watch for, and at what point the situation needs a health worker, a health centre, or the block office. Put this after the practical advice, not instead of it.
+- Aim for 6-12 sentences. Use short paragraphs or a simple numbered list. Plain language, no jargon; it may be read aloud to someone who cannot read.
+- Be direct. Do not hedge every sentence, and do not pad with disclaimers.
+- Write plain text. No markdown, no ** for bold, no # headings -- this is spoken aloud as well as read.
+- Do not invent specifics you are unsure of, especially helpline numbers, office names, fees or deadlines. Say "your nearest health centre" or "the block office" rather than guessing a number. A wrong number is worse than no number, because someone will dial it.
+- Never mention "passages", "context", "documents" or "the knowledge base". Just answer.
+- Answer in English. Translation to the user's language happens later in the pipeline."""
+
+#: Answering with nothing retrieved -- the model's own knowledge, on any topic.
+#:
+#: Deliberately not a locked-down variant of the grounded prompt. It is the
+#: same assistant answering a question the corpus does not cover, which is most
+#: questions a real person asks.
+GENERAL_PROMPT = """You are Starling, a knowledgeable and practical assistant for people in Northeast India. Answer from your own knowledge, on whatever subject is asked -- health, government services, education, farming, or anything else.
+
+You are often the only source of help someone has to hand, and the nearest health centre or block office may be hours away. Be genuinely useful.
+
+How to answer:
+- Lead with what the person can DO, in concrete steps. Specifics matter: quantities, timings, how to prepare something, what to use if the usual thing is unavailable, what a process costs and what documents it needs.
+- Explain briefly WHY, so they can adapt when their situation does not match exactly.
+- Say what to watch for, and at what point the situation needs a health worker, a health centre, or the block office. Put this after the practical advice, not instead of it.
+- Aim for 6-12 sentences. Use short paragraphs or a simple numbered list. Plain language, no jargon; it may be read aloud to someone who cannot read.
+- Be direct. Do not hedge every sentence, and do not pad with disclaimers.
+- Write plain text. No markdown, no ** for bold, no # headings -- this is spoken aloud as well as read.
+- Be accurate. Where something genuinely varies by state, scheme or individual, say what it depends on rather than inventing a figure.
+- Do not invent specifics you are unsure of, especially helpline numbers, office names, fees or deadlines. Say "your nearest health centre" or "the block office" rather than guessing a number. A wrong number is worse than no number, because someone will dial it.
+- Answer in English. Translation to the user's language happens later in the pipeline."""
 
 
 def loaded() -> bool:
@@ -118,23 +138,36 @@ def _chat(tokenizer: Any, system: str, user: str) -> str:
     )
 
 
+#: Markdown emphasis and headings the model reaches for despite being told not
+#: to. Stripped rather than rendered: this text has two destinations, and while
+#: a browser could render **bold**, OmniVoice reads the asterisks out loud.
+_MARKUP = re.compile(r"(\*\*|__|\*|`|^#{1,6}\s*)", re.MULTILINE)
+
+
+def _clean(text: str) -> str:
+    return _MARKUP.sub("", text).strip()
+
+
 def _generate(prompt: str, model: Any, tokenizer: Any, max_tokens: int) -> str:
     from mlx_lm import generate as mlx_generate
-    from mlx_lm.sample_utils import make_sampler
+    from mlx_lm.sample_utils import make_logits_processors, make_sampler
 
-    # Near-greedy: this is meant to restate given facts, not to be creative.
     text = mlx_generate(
         model,
         tokenizer,
         prompt=prompt,
         max_tokens=max_tokens,
         sampler=make_sampler(temp=0.3, top_p=0.9),
+        # A long answer has far more room to fall into a loop than a
+        # three-sentence one did, and a numbered list of near-identical steps
+        # is exactly the shape that invites it.
+        logits_processors=make_logits_processors(repetition_penalty=1.05),
         verbose=False,
     )
-    return text.strip()
+    return _clean(text)
 
 
-def answer(question: str, passages: list[str], max_tokens: int = 220) -> str:
+def answer(question: str, passages: list[str], max_tokens: int = MAX_TOKENS) -> str:
     """Phrase an answer to `question` using only `passages`.
 
     Callers must not invoke this with an empty `passages` -- an ungrounded
@@ -156,7 +189,7 @@ def answer(question: str, passages: list[str], max_tokens: int = 220) -> str:
     return _generate(prompt, model, tokenizer, max_tokens)
 
 
-def answer_general(question: str, max_tokens: int = 220) -> str:
+def answer_general(question: str, max_tokens: int = MAX_TOKENS) -> str:
     """Answer from the model's own knowledge, with no retrieved grounding.
 
     Separate from `answer()` on purpose. The caller has to choose this
