@@ -254,6 +254,10 @@ class AgentRequest(BaseModel):
     """An extract of the page's visible prose, so the agent can answer a
     question outright instead of clicking around to find what it already has."""
 
+    goal_en: str = ""
+    """An already-translated goal from POST /route, so the same sentence is
+    not sent through Sarvam twice."""
+
     conversation: list[dict[str, Any]] = Field(default_factory=list)
     """Earlier turns of the chat, as {role, text}. The panel is a
     conversation, so "now add it to the cart" has to resolve against what was
@@ -322,28 +326,6 @@ def clear_translation_cache() -> dict[str, Any]:
     return {"cleared": translation_cache.clear()}
 
 
-@app.get("/tasks")
-def list_tasks() -> dict[str, Any]:
-    """The known-task recipes, for the extension's client-side matcher.
-
-    Exposed so the panel can recognise "download my aadhaar" without a model
-    call. That matters most on pages Chrome forbids extensions from scripting
-    -- the new tab page, chrome:// -- where there is no page to read and the
-    only useful thing to do is navigate somewhere there is one.
-    """
-    return {
-        "tasks": [
-            {
-                "name": task.name,
-                "url": task.url,
-                "keywords": list(task.keywords),
-                "needs": list(task.needs),
-            }
-            for task in tasks.TASKS
-        ]
-    }
-
-
 class PageQuestion(BaseModel):
     question: str
     text: str
@@ -390,6 +372,7 @@ def agent_act(req: AgentRequest) -> dict[str, Any]:
             text=req.text,
             language=req.language,
             conversation=req.conversation,
+            goal_en=req.goal_en,
         )
         return {"result": decision.as_dict(), "timings": timings.as_dict()}
     except Exception as exc:

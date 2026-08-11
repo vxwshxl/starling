@@ -17,13 +17,10 @@ import {
   MAX_STEPS,
   detectNavigation,
   detectRestoreIntent,
-  detectTranslateIntent,
   fillSecret as fillSecretIn,
   goTo,
   hostOf,
-  matchTask,
   sameSite,
-  looksLikeQuestion,
   readPage,
   restoreTranslation,
   runAgent,
@@ -63,7 +60,6 @@ const state = {
   stopRequested: false,
   recorder: null,
   translated: false,
-  tasks: [],
   /** {role, text} turns sent to the model so follow-ups resolve. Trimmed to
    *  the last few by agent.py; kept whole here for the transcript. */
   conversation: [],
@@ -637,89 +633,77 @@ function askConfirmation(decision, resume) {
   scrollDown();
 }
 
-/** Where, if anywhere, this instruction needs to happen.
- *
- *  One rule for every case, rather than a special path per known site. In
- *  order of how specific the signal is:
- *
- *    1. a recipe from tasks.py -- "download my aadhaar" names no URL, so the
- *       destination has to come from somewhere, and a guessed government URL
- *       is how people land on lookalike sites;
- *    2. any site named in the message -- "buy me a formal shoe under 1000
- *       from amazon.in", "go to flipkart.com". This is the general case and
- *       the reason none of it is hardcoded per site.
- *
- *  Returns null when the instruction is about wherever we already are, which
- *  is the common case and must stay cheap: no model call, no navigation, no
- *  losing the state built up on the current page.
- */
-function destinationFor(text, currentUrl) {
-  const task = matchTask(text, state.tasks);
-  const target_ = task ? { url: task.url, label: task.name } : null;
-  const mentioned = target_ || detectNavigation(text);
-  if (!mentioned) return null;
-  // Already there. Navigating anyway would reload the page and discard
-  // whatever the last few turns achieved on it -- and every follow-up like
-  // "now add it to the cart" mentions nothing, so this is the guard that
-  // keeps a multi-turn task on one page.
-  if (sameSite(mentioned.url, currentUrl)) return null;
-  return { url: mentioned.url, label: mentioned.label || hostOf(mentioned.url) };
-}
 
-/** What to do when Chrome will not let us script the current tab.
+/** Ask the service what this request is, then do that.
  *
- *  The new tab page, chrome://, the Web Store, PDFs. This used to be a dead
- *  end -- every message got "Chrome does not allow extensions to run on this
- *  page" -- which is true and useless, and it is exactly where somebody
- *  starts a task from. The restriction is real and cannot be worked around,
- *  but almost nothing here actually needs the page:
+ *  The single dispatch point. It replaced a pile of regexes that each got one
+ *  phrasing right and the next one wrong -- most visibly, "size is 7 from
+ *  flipkart under 1000 rupees" produced a chatty list of instructions for
+ *  using Flipkart instead of opening it, because a domain matcher sees no
+ *  domain in "flipkart".
  *
- *    a known task     navigate to its official URL, then carry on normally
- *    "go to X"        navigate there, then carry on normally
- *    anything else    answer it with POST /chat, which needs no page at all
- *
- *  Only translating and questions *about this page* are genuinely impossible,
- *  and those say so.
+ *  Deciding what someone meant is the one thing the model is reliably better
+ *  at than a pattern, so it decides. Measured at about a second, and it
+ *  returns the goal already translated, which the step after it would
+ *  otherwise have paid for again.
  */
-async function doBlockedPage(text, turn) {
-  // Navigation first, and it costs no model call.
-  const nav = destinationFor(text, "about:blank");
+async function followRoute(text, turn) {
+  turn.setLabel("Working out what you need…");
+  const tab = await activeTab();
+  const { result: plan } = await client.route({
+    text,
+    url: state.blocked ? "" : tab.url || "",
+    title: state.blocked ? "" : tab.title || "",
+    language: target.value,
+  });
 
-  if (nav) {
-    turn.setLabel(`Opening ${nav.label}…`);
-    await goTo(state.tabId, nav.url);
+  // Somewhere else to be? Go there first, then work there.
+  if (plan.site && !sameSite(plan.site_url, tab.url || "")) {
+    turn.setLabel(`Opening ${plan.site}…`);
+    await goTo(state.tabId, plan.site_url);
     await refreshTab();
     if (state.blocked) {
       turn.finish("Could not open that", state.blocked);
       return;
     }
-    // On a real page now, so the ordinary agent loop takes over with the
-    // original goal intact.
-    turn.setLabel("Opened. Working…");
-    await doAgent(text, turn);
+    await doAgent(text, turn, { goalEn: plan.goal_en });
     return;
   }
 
-  if (detectTranslateIntent(text, state.languages) || looksLikeQuestion(text)) {
-    // A question could still be a general one rather than a page one, so it
-    // is answered rather than refused -- but say why the page was not read.
+  if (plan.intent === "translate") {
+    if (state.blocked) {
+      turn.finish("Cannot translate this", "Chrome does not allow extensions to read this page, so there is nothing here for me to translate. Open an ordinary site and ask again.");
+      return;
+    }
+    await doTranslate(turn, target.value);
+    return;
+  }
+
+  if (plan.intent === "answer") {
+    // A page we can read answers from the page; anything else falls back to
+    // Starling's own knowledge, which is what /chat is.
+    if (!state.blocked) {
+      await doAsk(text, turn);
+      return;
+    }
     turn.setLabel("Answering…");
     const { result } = await client.chat(text, target.value);
     turn.finish("Answered", result.text, result.text_en, target.value);
     state.conversation.push({ role: "assistant", text: redact(result.text_en || result.text) });
-    if (!state.blocked) return;
-    ui.thread.append(
-      el("p", "hint", "Chrome does not allow extensions to read this page, so that was answered without it. Open an ordinary site to ask about a page or translate it."),
-    );
-    scrollDown();
     return;
   }
 
-  turn.setLabel("Answering…");
-  const { result } = await client.chat(text, target.value);
-  turn.finish("Answered", result.text, result.text_en, target.value);
-  state.conversation.push({ role: "assistant", text: redact(result.text_en || result.text) });
+  // "act", with no particular site: do it here.
+  if (state.blocked) {
+    turn.finish(
+      "Nothing to work on",
+      "There is no page here for me to work on, and I could not tell which site you meant. Open the site, or name it — for example “buy shoes from flipkart”.",
+    );
+    return;
+  }
+  await doAgent(text, turn, { goalEn: plan.goal_en });
 }
+
 
 /** Answer a question about the page, without touching it. */
 async function doAsk(question, turn) {
@@ -743,7 +727,7 @@ async function doAsk(question, turn) {
   state.conversation.push({ role: "assistant", text: result.message_en || result.message });
 }
 
-async function doAgent(goal, turn, { preapproved = null } = {}) {
+async function doAgent(goal, turn, { preapproved = null, goalEn = "" } = {}) {
   turn.setLabel("Thinking…");
   let stepCount = 0;
 
@@ -753,6 +737,7 @@ async function doAgent(goal, turn, { preapproved = null } = {}) {
     tabId: state.tabId,
     client,
     conversation: state.conversation,
+    goalEn,
     preapproved,
     shouldStop: () => state.stopRequested,
     onEvent(event) {
@@ -781,7 +766,7 @@ async function doAgent(goal, turn, { preapproved = null } = {}) {
       const next = startBotTurn();
       setBusy(true);
       try {
-        await doAgent(goal, next, { preapproved: result.decision });
+        await doAgent(goal, next, { preapproved: result.decision, goalEn });
       } catch (err) {
         next.finish("Stopped", null);
         showError(err);
@@ -809,7 +794,7 @@ async function doAgent(goal, turn, { preapproved = null } = {}) {
       const next = startBotTurn();
       setBusy(true);
       try {
-        await doAgent(goal, next);
+        await doAgent(goal, next, { goalEn });
       } catch (err) {
         next.finish("Stopped", null);
         showError(err);
@@ -866,50 +851,30 @@ async function send() {
   const turn = startBotTurn();
 
   try {
-    // Chrome forbids scripting some pages. That is not a reason to refuse --
-    // navigating away and general answering both still work. See
-    // doBlockedPage().
-    if (state.blocked) {
-      await doBlockedPage(text, turn);
-      return;
-    }
-
-    // If the instruction names somewhere else -- a recipe, or just a domain
-    // mentioned in passing -- go there first. See destinationFor().
-    const dest = destinationFor(text, (await activeTab()).url);
-    if (dest) {
-      turn.setLabel(`Opening ${dest.label}…`);
-      await goTo(state.tabId, dest.url);
-      await refreshTab();
-      await doAgent(text, turn);
-      return;
-    }
-
-    // Fast paths first. Both are the commonest things anyone types here and
-    // both are settled by a regex, so paying two to eight seconds of Qwen to
-    // reach the same conclusion would make the most common command the
-    // slowest one. Anything ambiguous falls through to the agent.
+    // Chrome forbids scripting some pages. That is not a reason to refuse:
+    // followRoute() navigates away or answers from Starling's own knowledge.
+    // Two fast paths that need no model, because they are unambiguous and
+    // common: undoing a translation, and an explicit URL or "go to X".
     if (detectRestoreIntent(text)) {
       await restoreTranslation(state.tabId);
       state.translated = false;
       turn.finish("Restored", "Put the original page back.");
       return;
     }
-    const translate = detectTranslateIntent(text, state.languages);
-    if (translate) {
-      const wanted = translate.target || target.value;
-      if (translate.target) target.value = wanted;
-      await doTranslate(turn, wanted);
+    const explicit = detectNavigation(text);
+    if (explicit && !sameSite(explicit.url, (await activeTab()).url)) {
+      turn.setLabel(`Opening ${hostOf(explicit.url)}…`);
+      await goTo(state.tabId, explicit.url);
+      await refreshTab();
+      await doAgent(text, turn);
       return;
     }
-    // A question is read, not acted on. Routing it here rather than into the
-    // agent loop is what makes answers long and accurate -- see
-    // looksLikeQuestion() and PAGE_QA_PROMPT.
-    if (looksLikeQuestion(text)) {
-      await doAsk(text, turn);
-      return;
-    }
-    await doAgent(text, turn);
+
+    // Everything else is decided by the model, not by pattern matching.
+    // A regex cannot tell that "size is 7 from flipkart under 1000" means
+    // open flipkart.com -- it sees no domain, because people write brand
+    // names, not hostnames. See ROUTER_PROMPT in agent.py.
+    await followRoute(text, turn);
   } catch (err) {
     turn.finish("Stopped", null);
     showError(err);
@@ -1109,7 +1074,6 @@ async function boot() {
   await refreshHealth();
   try {
     await loadLanguages();
-    state.tasks = (await client.tasks()).tasks || [];
   } catch (err) {
     showError(err);
   }

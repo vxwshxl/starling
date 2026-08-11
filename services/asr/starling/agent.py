@@ -714,6 +714,171 @@ def _decide_en(body: str, refs: set[str]) -> Decision:
     )
 
 
+# ---------------------------------------------------------------------------
+# Routing: answer, act, or translate -- and where
+# ---------------------------------------------------------------------------
+#
+# The step that decides what kind of request this even is. It exists because
+# pattern matching cannot do the job and pretending otherwise produced the
+# most obviously wrong behaviour in the extension:
+#
+#   "size is 7 from flipkart under 1000 rupees"
+#
+# names the site plainly, and a domain regex sees nothing, because a person
+# writes "flipkart" and not "flipkart.com". The panel answered with a chatty
+# list of instructions for using Flipkart instead of opening it. Adding
+# "flipkart" to a lookup table fixes that one sentence and nothing else --
+# the next user says "myntra", or "book a train ticket", or "IRCTC".
+#
+# So the model decides, which is the one thing it is genuinely better at than
+# a regex: reading an ambiguous sentence and saying what was meant. It also
+# resolves the site name to a domain, because knowing that Flipkart lives at
+# flipkart.com is exactly the sort of ordinary world knowledge it has and a
+# rule in this file would not.
+#
+# Kept cheap: a short prompt, a tiny reply, and the cheap unambiguous cases
+# (an explicit URL, "translate this page") are still settled by the extension
+# without asking at all.
+
+ROUTER_PROMPT = """You decide what a user wants from a browser assistant. Reply with one JSON object and nothing else.
+
+{"intent":"act","site":"flipkart.com","why":"..."}   they want something DONE in the browser
+{"intent":"answer","site":null,"why":"..."}          they are asking a question to be answered in words
+{"intent":"translate","site":null,"why":"..."}       they want the current page put into their language
+
+Choosing "intent":
+- "act" when the request involves doing something on a website: buying, searching a shop, booking, downloading a document, filling a form, sending a message, checking a status, opening something. Shopping requests are almost always "act".
+- "answer" when they want information, an explanation, advice, or a fact -- including questions about the page they are on. Greetings and small talk are "answer".
+- "translate" only when they are asking for the page itself to be converted into their language.
+
+Choosing "site":
+- If the request names a company or service, give its domain even when the user wrote only the brand name. "flipkart" means flipkart.com. This is the most important part of your job.
+- Indian users mean the Indian site: amazon.in, not amazon.com.
+- Plain domain only. No https://, no path.
+- Use null when the work belongs on the page they are already looking at, or when no particular site is implied.
+- Never invent a domain you are unsure of. null is better than a wrong guess.
+
+Examples:
+USER: size is 7 from flipkart under 1000 rupees
+{"intent":"act","site":"flipkart.com","why":"shopping on Flipkart"}
+
+USER: buy me a formal shoe under 1000 from amazon.in
+{"intent":"act","site":"amazon.in","why":"shopping on Amazon India"}
+
+USER: book a train ticket to Guwahati
+{"intent":"act","site":"irctc.co.in","why":"train booking is IRCTC"}
+
+USER: play some music
+{"intent":"act","site":"youtube.com","why":"playing music"}
+
+USER: add it to the cart
+{"intent":"act","site":null,"why":"continues on the current page"}
+
+USER: what is dengue fever
+{"intent":"answer","site":null,"why":"a general question"}
+
+USER: what does this page say about eligibility
+{"intent":"answer","site":null,"why":"a question about the current page"}
+
+USER: show this page in Bodo
+{"intent":"translate","site":null,"why":"asking for the page to be translated"}"""
+
+
+@dataclass
+class Route:
+    intent: str = "answer"
+    site: str = ""
+    why: str = ""
+    goal_en: str = ""
+    language: str = "en"
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "intent": self.intent,
+            "site": self.site,
+            "site_url": f"https://{self.site}" if self.site else "",
+            "why": self.why,
+            "goal_en": self.goal_en,
+            "language": self.language,
+        }
+
+
+#: A domain and nothing else. The model is asked for a bare domain and mostly
+#: obliges; this rejects the times it returns a sentence, a path, or "none".
+_DOMAIN_ONLY = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9-]+)+$", re.I)
+
+
+def route(
+    text: str, *, url: str = "", title: str = "", language: str = "en"
+) -> tuple[Route, Timings]:
+    """Decide whether to answer, act, or translate -- and on which site.
+
+    Returns `goal_en` as well, so the caller can hand the already-translated
+    goal to whatever runs next instead of paying for the same translation
+    twice.
+    """
+    timings = Timings()
+    lang = language if language not in ("en", "") else "en"
+
+    goal_en = text
+    if lang != "en" and languages.translatable(lang):
+        with timings.stage("translate_in"):
+            goal_en = translate.to_english(text, lang)
+
+    # A known recipe settles it without asking, and more reliably: these are
+    # the flows where the destination must not be generated.
+    task = tasks.match(goal_en)
+    if task is not None:
+        site = re.sub(r"^https?://", "", task.url).split("/")[0]
+        return (
+            Route(intent="act", site=site, why=f"known task: {task.name}",
+                  goal_en=goal_en, language=lang),
+            timings,
+        )
+
+    model, tokenizer = llm.load()
+    body = f"CURRENT PAGE: {title.strip() or '(none)'}\nURL: {url.strip() or '(none)'}\n\nUSER: {goal_en.strip()}"
+    prompt = tokenizer.apply_chat_template(
+        [{"role": "system", "content": ROUTER_PROMPT}, {"role": "user", "content": body}],
+        add_generation_prompt=True,
+        tokenize=False,
+    )
+
+    from mlx_lm import generate as mlx_generate
+    from mlx_lm.sample_utils import make_logits_processors, make_sampler
+
+    with timings.stage("route"):
+        raw = mlx_generate(
+            model,
+            tokenizer,
+            prompt=prompt,
+            max_tokens=120,
+            sampler=make_sampler(temp=0.1, top_p=0.9),
+            logits_processors=make_logits_processors(repetition_penalty=1.05),
+            verbose=False,
+        )
+
+    result = Route(goal_en=goal_en, language=lang)
+    try:
+        parsed = parse_action(raw)
+        intent = str(parsed.get("intent", "")).strip().lower()
+        result.intent = intent if intent in ("act", "answer", "translate") else "answer"
+        result.why = str(parsed.get("why", "")).strip()[:200]
+        site = str(parsed.get("site") or "").strip().lower()
+        site = re.sub(r"^https?://", "", site).split("/")[0].strip()
+        # Anything that is not plainly a domain is discarded rather than
+        # navigated to. A wrong destination is worse than none: it throws away
+        # the page the user was on.
+        if site and site not in ("null", "none") and _DOMAIN_ONLY.match(site):
+            result.site = site
+    except ValueError as exc:
+        # Answering is the safe default -- it changes nothing on screen.
+        logger.warning("router reply unusable (%s); defaulting to answer", exc)
+
+    logger.info("routed to %s%s", result.intent, f" on {result.site}" if result.site else "")
+    return result, timings
+
+
 #: Answering a question about the page, with no action vocabulary in sight.
 #:
 #: A separate prompt because the two jobs pull against each other. The action
@@ -816,6 +981,7 @@ def decide(
     text: str = "",
     language: str = "en",
     conversation: list[dict[str, Any]] | None = None,
+    goal_en: str = "",
 ) -> tuple[Decision, Timings]:
     """Choose the next action, translating in and out of the user's language.
 
@@ -828,16 +994,19 @@ def decide(
     lang = language if language in ("en", "") else language
     warnings: list[str] = []
 
-    goal_en = goal
-    if lang not in ("en", ""):
-        if languages.translatable(lang):
-            with timings.stage("translate_in"):
-                goal_en = translate.to_english(goal, lang)
-        else:
-            warnings.append(
-                f"{languages.get(lang).name} cannot be translated, so the goal was "
-                "sent to the agent as written."
-            )
+    # `goal_en` may already have been produced by route(); translating the
+    # same sentence twice is several seconds of Sarvam for nothing.
+    if not goal_en:
+        goal_en = goal
+        if lang not in ("en", ""):
+            if languages.translatable(lang):
+                with timings.stage("translate_in"):
+                    goal_en = translate.to_english(goal, lang)
+            else:
+                warnings.append(
+                    f"{languages.get(lang).name} cannot be translated, so the goal "
+                    "was sent to the agent as written."
+                )
 
     # A mapping, not a set, so validate() can see what the model is actually
     # pointing at: the label drives the sensitive-action backstop, the role

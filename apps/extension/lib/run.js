@@ -121,62 +121,7 @@ export async function restoreTranslation(tabId) {
   return call(tabId, TRANSLATE_SCRIPT, { type: "sl:restore" });
 }
 
-/** Recognise "translate this page" without waking the model.
- *
- *  The agent can choose `translate_page` itself, and for anything phrased
- *  indirectly it has to. But that costs a decide() call -- two to eight
- *  seconds of Qwen -- to conclude what a regex settles instantly, and
- *  translating the page is the single most common thing anyone will type
- *  here. Making the commonest command the slowest one would be a strange
- *  choice.
- *
- *  Returns {target} when it is confident, or null to let the model decide.
- *  Deliberately conservative: "translate" plus optionally a language we know.
- *  Anything with more going on in it ("translate this and then find the
- *  contact page") falls through to the agent, which can sequence.
- */
-export function detectTranslateIntent(text, languages) {
-  const clean = text.trim().toLowerCase().replace(/[.!?]+$/, "");
-  if (clean.length > 60) return null;
-  if (!/\b(translate|translation)\b/.test(clean)) return null;
-  // A verb that implies more work than translating means it is not this.
-  if (/\b(and|then|after|find|search|click|buy|add|open|go to)\b/.test(clean)) return null;
 
-  const named = languages.find(
-    (l) =>
-      clean.includes(l.name.toLowerCase()) ||
-      clean.includes(l.native_name.toLowerCase()),
-  );
-  return { target: named ? named.code : null };
-}
-
-/** Match a goal against the known-task recipes, client-side.
- *
- *  Mirrors tasks.match() on the service, over the list fetched from /tasks so
- *  the keywords are not duplicated. Client-side because the place this
- *  matters most is a page Chrome will not let us script -- the new tab page
- *  -- where there is nothing to read, and paying a model call just to work
- *  out that "download my aadhaar" means going to UIDAI would be silly.
- *
- *  Token containment, not a contiguous phrase: "download my aadhaar card"
- *  has to match the keyword "download aadhaar".
- */
-export function matchTask(text, taskList) {
-  const words = new Set(
-    text.toLowerCase().replace(/[^a-z0-9\s]+/g, " ").split(/\s+/).filter(Boolean),
-  );
-  let best = null;
-  for (const task of taskList || []) {
-    for (const keyword of task.keywords) {
-      const tokens = keyword.split(" ");
-      if (tokens.every((t) => words.has(t))) {
-        const score = tokens.length * 100 + keyword.length;
-        if (!best || score > best.score) best = { score, task };
-      }
-    }
-  }
-  return best?.task ?? null;
-}
 
 /** Any site named anywhere in the message.
  *
@@ -294,34 +239,6 @@ export async function readPage(tabId) {
   return send(tabId, { type: "sl:index" });
 }
 
-/** Is this a question about the page, rather than an instruction to act?
- *
- *  Routing matters more than it looks: a question sent to the action loop
- *  gets answered by a prompt built to emit one JSON verb, and measured on
- *  Qwen2.5-3B that prompt answers questions by clicking a plausible link.
- *  Sent to /page/ask instead, the same model writes a full answer.
- *
- *  Kept to shapes that are unambiguously questions. An imperative that
- *  happens to contain a question word ("find out how much it costs") is not
- *  one of them -- that needs the page navigated, not read -- so a leading
- *  verb disqualifies the whole thing.
- */
-const ACTION_VERBS =
-  /^(find|search|go|open|click|buy|add|order|book|fill|log ?in|sign|scroll|navigate|show me the|take me|put|select|choose|download|apply|submit|send|pay|check ?out)\b/;
-
-const QUESTION_OPENERS =
-  /^(what|why|how|who|whom|whose|which|when|where|is|are|was|were|do|does|did|can|could|should|would|will|explain|tell me|summar|describe|list)\b/;
-
-export function looksLikeQuestion(text) {
-  const clean = text.trim().toLowerCase();
-  if (!clean) return false;
-  if (ACTION_VERBS.test(clean)) return false;
-  if (QUESTION_OPENERS.test(clean)) return true;
-  // A trailing question mark settles anything the openers missed, including
-  // questions asked in a language this regex knows nothing about.
-  return /[?？]\s*$/.test(clean);
-}
-
 /** The inverse, for "show the original" / "undo the translation". */
 export function detectRestoreIntent(text) {
   const clean = text.trim().toLowerCase().replace(/[.!?]+$/, "");
@@ -370,6 +287,7 @@ export async function runAgent({
   tabId,
   client,
   conversation = [],
+  goalEn = "",
   // Set when the user has just answered a confirmation with yes. The action
   // they approved is executed immediately, without asking the model again --
   // asking again would give it the chance to change its mind about what the
@@ -460,6 +378,9 @@ export async function runAgent({
       history,
       text: snapshot.text,
       conversation,
+      // Already translated by /route, so Sarvam is not asked to do the same
+      // sentence again on every step of the loop.
+      goal_en: goalEn,
     });
     const decision = response.result;
     onEvent({ type: "decision", n, decision, timings: response.timings });

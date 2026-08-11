@@ -111,6 +111,10 @@ export function createClient(base = DEFAULT_BASE) {
     /** A long answer about the page, with no action considered. */
     ask: (payload) => request(base, "/page/ask", { method: "POST", body: payload }),
 
+    /** Answer, act, or translate -- and on which site. One cheap call that
+     *  replaces guessing; see ROUTER_PROMPT in agent.py. */
+    route: (payload) => request(base, "/route", { method: "POST", body: payload }),
+
     /** The known-task recipes, so the panel can match them without a model. */
     tasks: () => request(base, "/tasks", { timeoutMs: 8000 }),
 

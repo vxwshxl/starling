@@ -151,7 +151,7 @@ def _fastapi_app() -> str:
     )
     for expected in (
         "/health", "/asr", "/tts", "/roundtrip",
-        "/translate", "/translate/batch", "/agent/act", "/page/ask", "/tasks",
+        "/translate", "/translate/batch", "/agent/act", "/page/ask", "/route",
     ):
         assert expected in routes, f"missing route {expected}"
     return ", ".join(routes)
