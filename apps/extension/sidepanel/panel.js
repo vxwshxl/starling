@@ -25,6 +25,7 @@ import {
   restoreTranslation,
   runAgent,
   runTranslation,
+  searchUrl,
   translateNewSegments,
 } from "../lib/run.js";
 
@@ -809,7 +810,19 @@ async function followRoute(text, turn) {
 
   if (plan.intent === "translate") {
     if (state.blocked) {
-      turn.finish("Cannot translate this", "Chrome does not allow extensions to read this page, so there is nothing here for me to translate. Open an ordinary site and ask again.");
+      // "Translate this page" on a page that does not exist is a real dead
+      // end and says so. Anything else routed here is a misroute -- the
+      // router reaches for "translate" whenever a language is mentioned, and
+      // "show me how Assamese culture looks" is a thing to go and find, not a
+      // page to rewrite. Searching is the useful reading of it.
+      if (/\b(this|current)\s+(page|site|tab)\b/i.test(plan.goal_en || text)) {
+        turn.finish(
+          "Nothing to translate",
+          "Chrome does not allow extensions to read this page, so there is nothing here to translate. Open an ordinary site and ask again.",
+        );
+        return;
+      }
+      await searchThenAct(text, plan, turn);
       return;
     }
     await doTranslate(turn, target.value);
@@ -830,12 +843,33 @@ async function followRoute(text, turn) {
     return;
   }
 
-  // "act", with no particular site: do it here.
+  // "act", with no particular site. On a real page that means "here". On a
+  // blocked one there is no "here", so go and find a starting point instead
+  // of telling the user to do it themselves.
   if (state.blocked) {
-    turn.finish(
-      "Nothing to work on",
-      "There is no page here for me to work on, and I could not tell which site you meant. Open the site, or name it — for example “buy shoes from flipkart”.",
-    );
+    await searchThenAct(text, plan, turn);
+    return;
+  }
+  await doAgent(text, turn, { goalEn: plan.goal_en });
+}
+
+
+/** Start from a search, then work the results like any other page.
+ *
+ *  This is what makes a fresh tab usable: the agent has no page to read, so
+ *  it gives itself one. The search runs in the user's pivot language rather
+ *  than their own, because `goal_en` is what the rest of the cascade already
+ *  speaks and English results are what the page agent can then read.
+ */
+async function searchThenAct(text, plan, turn) {
+  const query = (plan.goal_en || text).trim();
+  turn.setLabel("Searching the web…");
+  turn.addStep(`Search the web for “${query}”`, "no page here to start from");
+  await goTo(state.tabId, searchUrl(query));
+  await refreshTab();
+
+  if (state.blocked) {
+    turn.finish("Could not open a page", state.blocked);
     return;
   }
   await doAgent(text, turn, { goalEn: plan.goal_en });

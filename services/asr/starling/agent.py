@@ -804,7 +804,8 @@ ROUTER_PROMPT = """You decide what a user wants from a browser assistant. Reply 
 Choosing "intent":
 - "act" when the request involves doing something on a website: buying, searching a shop, booking, downloading a document, filling a form, sending a message, checking a status, opening something. Shopping requests are almost always "act".
 - "answer" when they want information, an explanation, advice, or a fact -- including questions about the page they are on. Greetings and small talk are "answer".
-- "translate" only when they are asking for the page itself to be converted into their language.
+- "translate" only when they are asking for the page itself to be converted into their language. Mentioning a language is not enough -- "show me Assamese culture" is something to go and find, not a page to rewrite. If CURRENT PAGE is (none) there is no page to translate, so never choose "translate".
+- Prefer "act" over "answer" when they want to be shown, found or taken somewhere: the browser can go and look, and that beats answering from memory.
 
 Choosing "site":
 - If the request names a company or service, give its domain even when the user wrote only the brand name. "flipkart" means flipkart.com. This is the most important part of your job.
@@ -836,7 +837,13 @@ USER: what does this page say about eligibility
 {"intent":"answer","site":null,"why":"a question about the current page"}
 
 USER: show this page in Bodo
-{"intent":"translate","site":null,"why":"asking for the page to be translated"}"""
+{"intent":"translate","site":null,"why":"asking for the page to be translated"}
+
+USER: show me how Assamese culture looks
+{"intent":"act","site":null,"why":"go and find it -- naming a language is not a translation request"}
+
+USER: find the nearest primary health centre
+{"intent":"act","site":null,"why":"something to go and look up in the browser"}"""
 
 
 @dataclass

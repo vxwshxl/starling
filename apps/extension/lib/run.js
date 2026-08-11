@@ -190,6 +190,26 @@ export function sameSite(a, b) {
   return x === y || x.endsWith(`.${y}`) || y.endsWith(`.${x}`);
 }
 
+/** Where to start when there is no page and no named site.
+ *
+ *  A new tab is a launchpad, so the agent should be able to launch from it.
+ *  Without this, every instruction that did not name a domain dead-ended on
+ *  `chrome://newtab` with "open a site first" -- which is true of the browser
+ *  and useless to the user, since opening a site is the thing they were
+ *  asking for.
+ *
+ *  A search URL is emphatically NOT the "guessed destination" that
+ *  `destinationFor()` and `tasks.py` exist to prevent. The distinction is the
+ *  whole point: this is one fixed, hardcoded host with the user's own words as
+ *  a query parameter, so the worst case is an unhelpful results page. A
+ *  *generated* destination is a hostname the model invented, and the worst
+ *  case there is somebody typing their Aadhaar number into a lookalike. Never
+ *  let this function start producing hostnames.
+ */
+export function searchUrl(query) {
+  return `https://www.google.com/search?q=${encodeURIComponent(query.trim())}`;
+}
+
 /** Send a tab somewhere, without needing to script the page it is on.
  *
  *  `chrome.tabs.update` needs only the "tabs" permission, so this works from

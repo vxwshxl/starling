@@ -288,8 +288,29 @@ against the extension's origin rather than the page that requested it.
   - a known task (*"download my aadhaar"*) → navigates to the official page,
     then carries on normally;
   - *"go to amazon.in"* or a pasted URL → navigates, then carries on;
-  - anything else → answered through `POST /chat`, Starling's own
-    retrieval-and-generate path, which needs no page at all.
+  - a question (*"what is dengue fever"*) → answered through `POST /chat`,
+    Starling's own retrieval-and-generate path, which needs no page at all;
+  - anything else to *do* → **searches the web for it**, lands on the results
+    and runs the agent loop from there. A new tab is a launchpad, so telling
+    the user to go and open a site first was answering a question they had
+    already asked.
 
   Only *translating this page* and *questions about this page* are genuinely
   impossible there, and those say so instead of pretending.
+
+  **The search destination is hardcoded, and that is the security property.**
+  `searchUrl()` is one fixed host with the user's own words as a query
+  parameter, so its worst case is an unhelpful results page. It is the
+  opposite of the guessed destination that `destinationFor()` and `tasks.py`
+  exist to prevent, whose worst case is an Aadhaar number typed into a
+  lookalike domain. If this ever starts producing hostnames, that distinction
+  is gone.
+
+- **"Show me X" on a new tab is handled structurally, not by the prompt.**
+  Qwen2.5-3B reads any mention of a language as a translation request:
+  *"show me how Assamese culture looks"* routes to `act` correctly, but append
+  *"in this browser"* and the same model returns `translate` — measured, with
+  the counter-example sitting in the prompt. So on an unscriptable page the
+  panel only accepts `translate` when the text actually names *this
+  page/site/tab*; everything else searches. Same pattern as every other guard
+  here: the prompt was tried first and measured to fail.
