@@ -261,16 +261,42 @@ export function detectRestoreIntent(text) {
  */
 export const MAX_STEPS = 12;
 
-/** Three identical actions in a row means stuck.
+/** Going round in circles.
  *
- *  The prompt already tells the model not to repeat a failing action, and a
- *  3B model does it anyway -- reliably, on pages where the obvious button
- *  does nothing. Cheaper to detect here than to keep paying for. */
+ *  "Three identical in a row" was the first version and it missed the case
+ *  that actually happens. Measured on an Amazon results page, the agent did:
+ *
+ *      type "shoe size 8 formal" into e8
+ *      click e7
+ *      type "shoe size 8 formal" into e8
+ *      click e7          ... nine steps, never touching a product
+ *
+ *  Consecutive matching never fires on that, because the two actions
+ *  alternate. What is actually true is that the same action keeps recurring,
+ *  so count occurrences over a window instead of comparing neighbours.
+ *
+ *  Also caught: the same TARGET being poked repeatedly with different text,
+ *  which is the same pathology one layer down.
+ */
+const STUCK_WINDOW = 6;
+const STUCK_REPEATS = 3;
+
 function isStuck(history) {
-  if (history.length < 3) return false;
-  const [a, b, c] = history.slice(-3);
-  const key = (s) => `${s.action}:${JSON.stringify(s.args)}`;
-  return key(a) === key(b) && key(b) === key(c);
+  if (history.length < STUCK_REPEATS) return false;
+  const recent = history.slice(-STUCK_WINDOW);
+  const counts = new Map();
+  for (const step of recent) {
+    for (const key of [
+      `${step.action}:${JSON.stringify(step.args)}`,
+      step.args?.ref ? `${step.action}@${step.args.ref}` : null,
+    ]) {
+      if (!key) continue;
+      const n = (counts.get(key) || 0) + 1;
+      if (n >= STUCK_REPEATS) return true;
+      counts.set(key, n);
+    }
+  }
+  return false;
 }
 
 /** Drive the browser towards `goal`.

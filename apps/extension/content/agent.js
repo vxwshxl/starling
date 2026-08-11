@@ -116,12 +116,75 @@
     return (main.innerText || "").replace(/\n{3,}/g, "\n\n").trim().slice(0, 4000);
   }
 
+  /** Which part of the page an element belongs to.
+   *
+   *  Ranked, and the ranking is what stops the agent drowning. On an Amazon
+   *  results page the header, the "All / Fresh / Prime / Sell" bar and the
+   *  left filter rail together contribute well over sixty controls, all of
+   *  them above or beside the products -- so a plain viewport ordering filled
+   *  the model's entire budget with chrome and never showed it a single "Add
+   *  to cart". Measured: it responded by typing the same search into the same
+   *  box three times running, because the search box was the most sensible
+   *  thing it could actually see.
+   *
+   *  Main content first, therefore. Nav and footer are still listed, because
+   *  "go to the contact page" needs them, but they queue behind the thing the
+   *  user is actually looking at.
+   */
+  function regionOf(element) {
+    if (element.closest("main, [role=main], #main, #content, article")) return 0;
+    if (element.closest("nav, [role=navigation], header, [role=banner]")) return 2;
+    if (element.closest("footer, [role=contentinfo]")) return 3;
+    if (element.closest("aside, [role=complementary], [role=search]")) return 2;
+    return 1; // unlandmarked page body -- most of the web
+  }
+
+  const REGION_TAG = ["", "", "nav", "foot"];
+
+  /** The nearest thing that names the group an element sits in.
+   *
+   *  Used to tell three identical "Add to cart" buttons apart by the product
+   *  each belongs to. Two details are load-bearing:
+   *
+   *  It stops at a landmark. `querySelector` on an ancestor searches that
+   *  ancestor's WHOLE subtree, so once the walk reaches <main> or <body> the
+   *  "nearest" match is just the first link on the page -- which labelled
+   *  every button on a shop fixture "Add to cart - Amazon.in", the site logo.
+   *
+   *  And it reads alt text. Product cards usually lead with an image wrapped
+   *  in a link, whose innerText is empty; taking the first candidate rather
+   *  than the first NON-EMPTY one was what let the walk escape the card.
+   */
+  const LABEL_STOP = new Set(["MAIN", "BODY", "NAV", "HEADER", "FOOTER", "ASIDE", "HTML"]);
+
+  function nearestLabel(element) {
+    let node = element.parentElement;
+    for (let depth = 0; node && depth < 4; depth++, node = node.parentElement) {
+      if (LABEL_STOP.has(node.tagName)) break;
+      for (const candidate of node.querySelectorAll("h1, h2, h3, h4, a[href]")) {
+        if (candidate.contains(element)) continue;
+        const text = (
+          candidate.innerText ||
+          candidate.querySelector("img[alt]")?.alt ||
+          candidate.getAttribute("aria-label") ||
+          ""
+        )
+          .replace(/\s+/g, " ")
+          .trim();
+        if (text) return text.slice(0, 60);
+      }
+    }
+    return "";
+  }
+
   function index() {
     state.refs.clear();
     state.counter = 0;
 
     const height = window.innerHeight || 800;
     const found = [];
+    const seen = new Set();
+
     for (const element of document.querySelectorAll(INTERACTIVE)) {
       if (!isVisible(element)) continue;
       const name = accessibleName(element);
@@ -132,18 +195,55 @@
       // the agent click things it does not understand.
       if (!name && role !== "input:text" && role !== "select") continue;
 
-      const rect = element.getBoundingClientRect();
-      found.push({ element, name, role, rect });
+      // Product grids wrap each item in two or three links -- the image, the
+      // title, the rating -- all with the same name AND the same href.
+      // Listing them separately spends the budget three times on one product
+      // and offers the model three indistinguishable choices.
+      //
+      // The href is part of the key deliberately. Deduping on the name alone
+      // looked right and quietly collapsed all three "Add to cart" buttons on
+      // a results page into one, leaving two of the three products
+      // unreachable -- a worse bug than the one it fixed. Same label,
+      // different target, different control.
+      const href = element.getAttribute?.("href") || "";
+      const key = `${role} ${name} ${href}`;
+      if (name && href && seen.has(key)) continue;
+      seen.add(key);
+
+      found.push({
+        element,
+        name,
+        role,
+        rect: element.getBoundingClientRect(),
+        region: regionOf(element),
+      });
     }
 
-    // Reading order: what is on screen first, then down the page. This is the
-    // order agent.py truncates at MAX_ELEMENTS, so it decides what the model
-    // gets to see at all on a long page.
+    // Main content first, then on-screen before off-screen, then down the
+    // page. This is the order agent.py truncates at MAX_ELEMENTS, so it
+    // decides what the model gets to see at all.
     found.sort((a, b) => {
       const aOn = a.rect.bottom > 0 && a.rect.top < height ? 0 : 1;
       const bOn = b.rect.bottom > 0 && b.rect.top < height ? 0 : 1;
-      return aOn - bOn || a.rect.top - b.rect.top || a.rect.left - b.rect.left;
+      return (
+        a.region - b.region ||
+        aOn - bOn ||
+        a.rect.top - b.rect.top ||
+        a.rect.left - b.rect.left
+      );
     });
+
+    // Disambiguate labels that repeat. Three buttons all called "Add to cart"
+    // give the model nothing to choose between, so it picks the first, which
+    // is not necessarily the product just discussed. Naming the item each one
+    // belongs to turns a coin flip into a decision.
+    const nameCounts = new Map();
+    for (const f of found) nameCounts.set(f.name, (nameCounts.get(f.name) || 0) + 1);
+    for (const f of found) {
+      if (!f.name || nameCounts.get(f.name) < 2) continue;
+      const context = nearestLabel(f.element);
+      if (context && context !== f.name) f.name = `${f.name} \u2014 ${context}`;
+    }
 
     const elements = found.map(({ element, name, role }) => {
       const ref = `e${++state.counter}`;

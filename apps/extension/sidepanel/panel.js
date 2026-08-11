@@ -11,7 +11,7 @@
 // idle and the agent loop spends most of its life waiting, so a loop running
 // there stops halfway with no error.
 
-import { ApiError, createClient } from "../lib/api.js";
+import { AbortedError, ApiError, abortAll, createClient } from "../lib/api.js";
 import { TabError, activeTab, checkInjectable } from "../lib/tabs.js";
 import {
   MAX_STEPS,
@@ -267,6 +267,7 @@ function describeAction(decision) {
 }
 
 function showError(err) {
+  if (err instanceof AbortedError) return; // the user pressed Stop
   const message =
     err instanceof ApiError || err instanceof TabError
       ? err.message
@@ -291,7 +292,11 @@ function setBusy(busy) {
   state.busy = busy;
   ui.send.hidden = busy;
   ui.stop.hidden = !busy;
-  ui.input.disabled = busy;
+  // The input deliberately stays enabled. Disabling it meant that noticing
+  // the agent going the wrong way and wanting to redirect it left you with
+  // nothing to do but watch. Sending while it works interrupts and starts the
+  // new instruction -- which is what every chat client does and what people
+  // try first.
 }
 
 async function refreshTab() {
@@ -833,7 +838,16 @@ async function doAgent(goal, turn, { preapproved = null, goalEn = "" } = {}) {
 
 async function send() {
   const text = ui.input.value.trim();
-  if (!text || state.busy) return;
+  if (!text) return;
+
+  // Interrupt rather than ignore. The loop unwinds on the aborted fetch;
+  // a short wait lets its `finally` run so two runs never overlap.
+  if (state.busy) {
+    stopRun();
+    for (let i = 0; i < 40 && state.busy; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
 
   clearError();
   await refreshTab();
@@ -876,7 +890,7 @@ async function send() {
     // names, not hostnames. See ROUTER_PROMPT in agent.py.
     await followRoute(text, turn);
   } catch (err) {
-    turn.finish("Stopped", null);
+    turn.finish("Stopped", err instanceof AbortedError ? "Stopped." : null);
     showError(err);
   } finally {
     setBusy(false);
@@ -957,7 +971,14 @@ async function toggleMic() {
 // ---------------------------------------------------------------------------
 
 ui.send.addEventListener("click", send);
-ui.stop.addEventListener("click", () => { state.stopRequested = true; });
+function stopRun() {
+  state.stopRequested = true;
+  // The flag alone is only read between steps, and a step is mostly one long
+  // fetch. Aborting it makes Stop take effect now rather than in eight
+  // seconds' time.
+  abortAll();
+}
+ui.stop.addEventListener("click", stopRun);
 ui.mic.addEventListener("click", toggleMic);
 ui.status.addEventListener("click", refreshHealth);
 

@@ -23,8 +23,36 @@ export class ApiError extends Error {
   }
 }
 
+/** Every request currently in flight.
+ *
+ *  Tracked so Stop can actually stop. A step of the agent loop spends most of
+ *  its wall clock inside one of these fetches -- two to eight seconds of Qwen
+ *  -- and a `shouldStop` flag checked between steps cannot interrupt that. So
+ *  pressing Stop was doing nothing visible for the length of a whole step,
+ *  and on a long page that reads as the button being broken. Aborting the
+ *  fetch makes it immediate.
+ */
+const inflight = new Set();
+
+/** Raised when the user pressed Stop, as distinct from a network failure. */
+export class AbortedError extends Error {
+  constructor() {
+    super("Stopped.");
+    this.name = "AbortedError";
+  }
+}
+
+export function abortAll() {
+  for (const controller of inflight) {
+    controller.byUser = true;
+    controller.abort();
+  }
+  inflight.clear();
+}
+
 async function request(base, path, { method = "GET", body, timeoutMs } = {}) {
   const controller = new AbortController();
+  inflight.add(controller);
   // No timeout by default, deliberately. A first translation pays a ~2.6 GB
   // model load and a first agent step pays ~1.8 GB more; any timeout short
   // enough to be useful for a hung request is short enough to kill a cold
@@ -42,6 +70,9 @@ async function request(base, path, { method = "GET", body, timeoutMs } = {}) {
     });
   } catch (err) {
     if (err.name === "AbortError") {
+      // Two very different things arrive here. A user pressing Stop is not an
+      // error and must not be reported as one.
+      if (controller.byUser) throw new AbortedError();
       throw new ApiError(`The service did not answer in time (${path}).`, {
         offline: true,
       });
@@ -52,6 +83,7 @@ async function request(base, path, { method = "GET", body, timeoutMs } = {}) {
     );
   } finally {
     if (timer) clearTimeout(timer);
+    inflight.delete(controller);
   }
 
   if (!response.ok) {
