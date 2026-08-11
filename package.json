@@ -11,6 +11,7 @@
     "dev:api": "cd services/asr && STARLING_DEVICE=cpu uv run uvicorn starling.main:app --reload --port 8000",
     "lab": "cd services/asr && STARLING_DEVICE=cpu uv run python -m starling.lab",
     "smoke": "cd services/asr && uv run python -m starling.smoke",
+    "check:ext": "node --check apps/extension/background.js && node --check apps/extension/lib/api.js && node --check apps/extension/lib/tabs.js && node --check apps/extension/lib/run.js && node --check apps/extension/content/translate.js && node --check apps/extension/content/agent.js && node --check apps/extension/sidepanel/panel.js && echo 'extension: all scripts parse'",
     "setup:api": "cd services/asr && uv sync"
   },
   "engines": {

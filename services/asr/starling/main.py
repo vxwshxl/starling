@@ -5,6 +5,9 @@
     POST /asr         audio -> text
     POST /tts         text (+ optional reference audio) -> audio
     POST /roundtrip   audio -> text -> audio in the speaker's cloned voice
+    POST /translate   one string, between English and one Indic language
+    POST /translate/batch   many page segments at once, cached and deduped
+    POST /agent/act   one browsing action, for the Chrome extension
     POST /unload      free model memory
 
 Models are NOT warmed at startup. First real request pays the download and
@@ -23,9 +26,11 @@ from typing import Any, Iterator
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
-from . import chat, languages, models, pipeline
+from . import agent, chat, languages, models, page, pipeline, translate
 from .config import settings
+from .translate_cache import cache as translation_cache
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,9 +52,17 @@ app = FastAPI(
 # service binds to 127.0.0.1 and holds no credentials, so the widening buys
 # a real convenience at no exposure -- an attacker who can already run code
 # on this machine does not need a browser's help.
+#
+# `chrome-extension://` is here for apps/extension. A service worker's fetch
+# carries its own extension origin, NOT the page's and not a loopback one, so
+# without this every extension request fails preflight -- and it fails as a
+# bare "Failed to fetch" in the worker's console with nothing pointing at
+# CORS, which is an afternoon lost if you have not seen it before. The
+# extension id changes every time it is loaded unpacked, so the id itself
+# cannot be pinned; the scheme is the tightest thing available.
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_origin_regex=r"(http://(localhost|127\.0\.0\.1)(:\d+)?|chrome-extension://[a-p]+)",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -203,6 +216,125 @@ def chat_endpoint(
             },
             "timings": timings.as_dict(),
         }
+    except Exception as exc:
+        raise _fail(exc) from exc
+
+
+# ---------------------------------------------------------------------------
+# Translation and browsing, for apps/extension
+# ---------------------------------------------------------------------------
+#
+# These three take JSON rather than form data, unlike everything above. The
+# callers are a service worker sending arrays of page segments and objects of
+# page elements, which multipart cannot express without the caller flattening
+# it by hand.
+
+
+class TranslateRequest(BaseModel):
+    text: str
+    source: str = "en"
+    target: str
+
+
+class BatchTranslateRequest(BaseModel):
+    segments: list[str]
+    source: str = "en"
+    target: str
+    use_cache: bool = True
+
+
+class AgentRequest(BaseModel):
+    goal: str
+    url: str = ""
+    title: str = ""
+    language: str = "en"
+    elements: list[dict[str, Any]] = Field(default_factory=list)
+    history: list[dict[str, Any]] = Field(default_factory=list)
+    text: str = ""
+    """An extract of the page's visible prose, so the agent can answer a
+    question outright instead of clicking around to find what it already has."""
+
+
+@app.post("/translate")
+def translate_one(req: TranslateRequest) -> dict[str, Any]:
+    """Translate one string. English on one side; see translate.py for why."""
+    try:
+        if req.source == req.target:
+            return {"result": {"text": req.text, "source": req.source,
+                               "target": req.target}, "timings": {}}
+        from .timing import Timings
+
+        timings = Timings()
+        with timings.stage("translate"):
+            if req.source == "en":
+                out = translate.from_english(req.text, req.target)
+            elif req.target == "en":
+                out = translate.to_english(req.text, req.source)
+            else:
+                raise ValueError(
+                    "Sarvam-Translate is English<->Indic only. Pivot through "
+                    "English explicitly if you want Indic->Indic."
+                )
+        return {
+            "result": {"text": out, "source": req.source, "target": req.target},
+            "timings": timings.as_dict(),
+        }
+    except Exception as exc:
+        raise _fail(exc) from exc
+
+
+@app.post("/translate/batch")
+def translate_batch(req: BatchTranslateRequest) -> dict[str, Any]:
+    """Translate many page segments at once.
+
+    The returned list is positionally aligned with `segments`, always -- the
+    extension writes results back into DOM nodes by index, so a filtered or
+    reordered reply would scramble the page rather than fail. Segments with
+    nothing translatable in them come back unchanged and are counted as
+    skipped.
+    """
+    try:
+        result, timings = page.translate_segments(
+            req.segments,
+            source=req.source,
+            target=req.target,
+            use_cache=req.use_cache,
+        )
+        return {"result": result.as_dict(), "timings": timings.as_dict()}
+    except Exception as exc:
+        raise _fail(exc) from exc
+
+
+@app.get("/translate/cache")
+def translation_cache_status() -> dict[str, Any]:
+    return {"entries": translation_cache.size()}
+
+
+@app.post("/translate/cache/clear")
+def clear_translation_cache() -> dict[str, Any]:
+    """Forget every cached segment. The cache holds text from pages the user
+    browsed, so this is offered in the extension's UI, not just here."""
+    return {"cleared": translation_cache.clear()}
+
+
+@app.post("/agent/act")
+def agent_act(req: AgentRequest) -> dict[str, Any]:
+    """Decide ONE browsing action from a page snapshot.
+
+    Stateless by design: the loop lives in the extension, which is the only
+    side that can see the live DOM. See agent.py.
+    """
+    try:
+        decision, timings = agent.decide(
+            req.goal,
+            url=req.url,
+            title=req.title,
+            elements=req.elements,
+            history=req.history,
+            text=req.text,
+            language=req.language,
+        )
+        return {"result": decision.as_dict(), "timings": timings.as_dict()}
     except Exception as exc:
         raise _fail(exc) from exc
 

@@ -149,9 +149,149 @@ def _fastapi_app() -> str:
     routes = sorted(
         r.path for r in app.routes if getattr(r, "methods", None)
     )
-    for expected in ("/health", "/asr", "/tts", "/roundtrip"):
+    for expected in (
+        "/health", "/asr", "/tts", "/roundtrip",
+        "/translate", "/translate/batch", "/agent/act",
+    ):
         assert expected in routes, f"missing route {expected}"
     return ", ".join(routes)
+
+
+def _batch_protocol() -> str:
+    """The pack/unpack round trip that whole-page translation rides on.
+
+    Worth a smoke check because its failure mode is silent and severe: a reply
+    the parser mis-splits does not raise, it attaches the wrong translation to
+    the wrong DOM node, and the page looks translated while being nonsense.
+    """
+    from .translate import _pack, _unpack, plan_batches
+
+    texts = ["Home", "Read more", "Contact us"]
+    packed = _pack(texts)
+    assert packed.count("<<") == 3, f"expected 3 markers, got {packed!r}"
+
+    # A well-formed reply.
+    good = _unpack("<<1>> ঘৰ\n<<2>> অধিক পঢ়ক\n<<3>> যোগাযোগ", 3)
+    assert good == {0: "ঘৰ", 1: "অধিক পঢ়ক", 2: "যোগাযোগ"}, good
+
+    # A dropped segment must come back as a GAP, not as a shifted mapping --
+    # this is the case that would silently mis-attribute translations.
+    gap = _unpack("<<1>> ঘৰ\n<<3>> যোগাযোগ", 3)
+    assert gap == {0: "ঘৰ", 2: "যোগাযোগ"}, gap
+
+    # Regression, and the reason _translate_batch is all-or-nothing. Measured
+    # from the real model: it absorbed one input into its neighbour and then
+    # RENUMBERED the rest, so every marker still looked well-formed while the
+    # contents had shifted by one. The only detectable signal is that the set
+    # of markers is no longer complete -- so an incomplete parse must never be
+    # treated as "mostly fine with a couple of gaps".
+    renumbered = _unpack("<<1>> a\n<<2>> b\n<<3>> c\n<<5>> e", 5)
+    assert len(renumbered) != 5, "a renumbered reply must not look complete"
+
+    # The single-angle form the model sometimes emits instead.
+    assert _unpack("<1> ঘৰ", 1) == {0: "ঘৰ"}
+
+    # A segment over the character budget gets a batch to itself.
+    plan = plan_batches(["a" * 900, "short", "also short"])
+    assert plan[0] == [0], f"oversized segment was batched with others: {plan}"
+    return f"pack/unpack round trip, drop detection, {len(plan)} batches planned"
+
+
+def _page_filters() -> str:
+    """What page translation refuses to spend the model on."""
+    from .translate_cache import dedupe, worth_translating
+
+    keep = ["Hello", "Read more", "सुरक्षा", "ᱥᱟᱱᱛᱟᱲᱤ", "Terms/Conditions"]
+    drop = ["2024", "1,299", "...", "→", "https://x.com/a", "a@b.com", "/about/us", "index.html"]
+    for text in keep:
+        assert worth_translating(text), f"{text!r} should be translated"
+    for text in drop:
+        assert not worth_translating(text), f"{text!r} should be skipped"
+
+    unique, mapping = dedupe(["Read more", "Home", "Read more"])
+    assert unique == ["Read more", "Home"] and mapping == [0, 1, 0], (unique, mapping)
+    return f"{len(keep)} kept, {len(drop)} skipped, dedupe collapses repeats"
+
+
+def _agent_contract() -> str:
+    """The agent's reply parser and its refusal to touch unlisted elements."""
+    from .agent import build_prompt_body, parse_action, validate
+
+    assert parse_action('```json\n{"action":"click","ref":"e3"}\n```')["ref"] == "e3"
+    assert parse_action('Sure: {"action":"scroll","direction":"down"} then...')["action"] == "scroll"
+
+    ok = validate({"action": "type", "ref": "e2", "text": "fever", "submit": True}, {"e2"})
+    assert ok.args == {"ref": "e2", "text": "fever", "submit": True}, ok.args
+    assert not ok.terminal
+    assert validate({"action": "done", "message": "found it"}, set()).terminal
+
+    # Each of these must be refused. The ref check is the safety property of
+    # the whole design: a model-invented reference must never reach the page.
+    for bad in (
+        {"action": "click", "ref": "e99"},
+        {"action": "frobnicate"},
+        {"action": "click"},
+        {"action": "navigate", "url": "javascript:alert(1)"},
+        {"action": "scroll", "direction": "sideways"},
+    ):
+        try:
+            validate(bad, {"e2"})
+        except ValueError:
+            continue
+        raise AssertionError(f"validate() accepted {bad!r}")
+
+    body = build_prompt_body(
+        "book a ticket", url="https://x", title="X",
+        elements=[{"ref": "e1", "role": "button", "name": "Search"}],
+    )
+    assert "e1" in body and "GOAL: book a ticket" in body
+    return "parser handles fences and prose; 5 invalid actions refused"
+
+
+def _extension_manifest() -> str:
+    """The Chrome extension's manifest, and that every file it names exists.
+
+    Chrome reports a missing file as a silent no-op or an unhelpful load
+    error, and an unpacked extension is only loaded by hand -- so a typo here
+    is discovered in front of an audience rather than in CI. Cheap to check.
+    """
+    import json
+
+    from .config import REPO_ROOT
+
+    root = REPO_ROOT / "apps" / "extension"
+    if not root.is_dir():
+        return "no apps/extension directory; skipped"
+
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["manifest_version"] == 3, "must be MV3"
+
+    referenced = [
+        manifest["background"]["service_worker"],
+        manifest["side_panel"]["default_path"],
+        *manifest["icons"].values(),
+        *manifest["action"]["default_icon"].values(),
+    ]
+    # The content scripts are injected programmatically rather than declared,
+    # so the manifest does not name them and this has to.
+    referenced += ["content/translate.js", "content/agent.js", "lib/api.js",
+                   "lib/tabs.js", "lib/run.js", "sidepanel/panel.js",
+                   "sidepanel/panel.css"]
+    missing = [path for path in referenced if not (root / path).is_file()]
+    assert not missing, f"manifest references missing files: {missing}"
+
+    # The service only allows chrome-extension:// through CORS because of the
+    # widening in main.py; if that is ever reverted, every request the
+    # extension makes fails with a bare "Failed to fetch".
+    from .main import app
+
+    cors = [m for m in app.user_middleware if "CORS" in str(m)]
+    assert cors, "CORS middleware is not installed"
+    assert "chrome-extension" in str(cors[0].kwargs.get("allow_origin_regex", "")), (
+        "CORS does not allow chrome-extension:// origins; the extension cannot "
+        "reach this service"
+    )
+    return f"MV3, {len(referenced)} referenced files present, CORS allows the extension"
 
 
 def main() -> int:
@@ -162,6 +302,10 @@ def main() -> int:
     check("configured codes exist in libraries", _codes_exist_in_libraries)
     check("model APIs match our call sites", _model_apis_present)
     check("fastapi routes registered", _fastapi_app)
+    check("batch translation protocol", _batch_protocol)
+    check("page translation filters", _page_filters)
+    check("agent action contract", _agent_contract)
+    check("chrome extension wiring", _extension_manifest)
 
     print()
     if failures:

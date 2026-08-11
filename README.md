@@ -79,10 +79,31 @@ A **cascaded** pipeline, not one end-to-end model:
 | Recognition | [`mlx-whisper`](https://pypi.org/project/mlx-whisper/) · [IndicConformer](https://huggingface.co/OpenVoiceOS) ONNX | Metal / CoreML |
 | Retrieval | BM25 over a curated corpus, no dependency | CPU, sub-millisecond |
 | Answering | Qwen2.5-3B-Instruct 4-bit via [MLX](https://github.com/ml-explore/mlx) | Metal |
+| Translation | [Sarvam-Translate](https://huggingface.co/sarvamai/sarvam-translate) 4-bit, a Gemma-3-4B fine-tune | Metal |
 | Voice | [`omnivoice`](https://github.com/k2-fsa/OmniVoice), zero-shot cloning, 24 kHz | CPU |
 | Audio | ffmpeg, everything normalised to 16 kHz mono WAV | CPU |
 
 Covering **healthcare · governance · education · rural development**.
+
+English is the pivot throughout: the knowledge base is English, the answering
+model reasons in English, and the user's language goes on at the very end.
+That is not a shortcut — it is the only arrangement in which a 3B model gives
+a correct answer in Bodo.
+
+## Also: the browser
+
+`apps/extension/` puts the same models behind a Chrome side panel.
+
+- **Translate any page** into the six languages, in place, one click to
+  restore. Visible screen first; the cache makes a revisited page instant.
+- **Drive the browser by voice.** Say what you want in your own language; the
+  agent reads the page, takes one action, looks again, and repeats — showing
+  you every step and ringing the element before it touches it.
+
+No build step. `chrome://extensions` → Developer mode → **Load unpacked** →
+`apps/extension`. It talks to `127.0.0.1:8000` and nothing else; the
+manifest's `connect-src` blocks any other host.
+[Details, measured timings and limitations.](./apps/extension/README.md)
 
 ## Quick start
 
@@ -131,12 +152,19 @@ apps/web/          Next.js 15 · TypeScript · Tailwind 4 · shadcn/ui
   /                chat  — the product
   /status          service health, model controls, language coverage
 
+apps/extension/    Chrome MV3 · no build step
+  content/         page translation and the agent's hands, in the page
+  sidepanel/       the UI, and the owner of both loops
+
 services/asr/      Python 3.11 · FastAPI · uv
   languages.py     the single source of truth for language support
   asr_backends.py  Whisper and IndicConformer behind one protocol
   knowledge.py     the curated corpus
   retrieval.py     BM25, sixty lines, no dependency
   llm.py           local model, grounded generation only
+  translate.py     Sarvam-Translate, both legs, plus batched segments
+  page.py          whole-page translation: filter · cache · dedupe · batch
+  agent.py         one browsing action per call, validated against the page
   pipeline.py      transcribe · synthesize · roundtrip
 ```
 
@@ -144,10 +172,16 @@ services/asr/      Python 3.11 · FastAPI · uv
 
 Stated here rather than discovered on stage.
 
-- **Translation is not wired up.** `omnivoice` pins `transformers>=5.3.0`;
-  transformers 5 removed slow tokenizers; IndicTrans2 needs one. Speech works
-  end to end in all six languages, but answers come back in English. The fix
-  is running IndicTrans2 in an isolated environment as a subprocess.
+- **Whole-page translation is not instant, and cannot be.** A 4B model on this
+  machine manages about 2.4 segments a second, so a dense first screen is
+  ~12 s cold. The extension sends the visible viewport first and caches
+  everything, which makes a revisited page instant — but a long article keeps
+  filling in while you read it. The panel shows the counts rather than
+  claiming otherwise.
+- **A sentence broken by a link translates in pieces.** Cosmetic inline markup
+  is absorbed into the surrounding sentence; `<a>` cannot be, because the
+  translation would have to be split back across nodes and these languages
+  reorder words.
 - **Synthesis is slow** — measured at ~5.5× realtime on CPU (17 s of compute
   for 3.2 s of speech), and considerably worse when the machine is already
   under memory pressure. Speech is therefore an explicit button, never

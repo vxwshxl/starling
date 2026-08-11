@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Starling</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <header class="header">
+      <img class="mark" src="../icons/icon48.png" alt="" width="24" height="24" />
+      <div class="header-text">
+        <h1>Starling</h1>
+        <p class="page-title" id="page-title">No page</p>
+      </div>
+      <button
+        class="status"
+        id="status"
+        type="button"
+        title="Service status — click to re-check"
+      >
+        <span class="dot" id="status-dot"></span>
+        <span id="status-text">checking</span>
+      </button>
+    </header>
+
+    <div class="lang-row">
+      <label class="field">
+        <span class="field-label">Page is in</span>
+        <select id="source-language">
+          <option value="en">English</option>
+        </select>
+      </label>
+      <span class="arrow" aria-hidden="true">→</span>
+      <label class="field">
+        <span class="field-label">Show it in</span>
+        <select id="target-language"></select>
+      </label>
+    </div>
+    <p class="caveat" id="language-caveat" hidden></p>
+
+    <nav class="tabs" role="tablist">
+      <button role="tab" id="tab-translate" aria-selected="true" data-panel="panel-translate">
+        Translate
+      </button>
+      <button role="tab" id="tab-agent" aria-selected="false" data-panel="panel-agent">
+        Do it for me
+      </button>
+    </nav>
+
+    <!-- ------------------------------------------------------------------ -->
+    <section class="panel" id="panel-translate" role="tabpanel">
+      <button class="primary" id="translate-btn" type="button">
+        Translate this page
+      </button>
+      <button class="secondary" id="restore-btn" type="button" hidden>
+        Show the original
+      </button>
+
+      <div class="progress" id="translate-progress" hidden>
+        <div class="bar"><div class="fill" id="translate-fill"></div></div>
+        <p class="progress-text" id="translate-status"></p>
+        <button class="ghost stop" id="translate-stop" type="button">Stop</button>
+      </div>
+
+      <dl class="counts" id="translate-counts" hidden>
+        <div><dt>translated</dt><dd id="count-translated">0</dd></div>
+        <div><dt>from cache</dt><dd id="count-cache">0</dd></div>
+        <div><dt>skipped</dt><dd id="count-skipped">0</dd></div>
+      </dl>
+
+      <label class="check">
+        <input type="checkbox" id="watch-toggle" checked />
+        <span>
+          Keep translating content the page loads later
+          <em>Needed on sites that render as you scroll.</em>
+        </span>
+      </label>
+
+      <p class="note">
+        The visible screen is translated first, then the rest of the page. A long
+        article keeps filling in while you read — a 4B translation model on this
+        machine cannot do several hundred segments at once, so it does the ones
+        you are looking at.
+      </p>
+    </section>
+
+    <!-- ------------------------------------------------------------------ -->
+    <section class="panel" id="panel-agent" role="tabpanel" hidden>
+      <div class="goal">
+        <textarea
+          id="goal"
+          rows="2"
+          placeholder="Tell me what to do on this page…"
+        ></textarea>
+        <button class="mic" id="mic-btn" type="button" title="Speak your instruction">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+            <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            <path d="M12 19v3" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="examples" id="examples">
+        <button type="button">Find the contact details on this site</button>
+        <button type="button">Search this page for eligibility rules</button>
+        <button type="button">Summarise what this page is asking me to do</button>
+      </div>
+
+      <div class="agent-actions">
+        <button class="primary" id="agent-btn" type="button">Go</button>
+        <button class="ghost stop" id="agent-stop" type="button" hidden>Stop</button>
+      </div>
+
+      <div class="answer" id="agent-answer" hidden>
+        <p class="answer-text" id="agent-answer-text"></p>
+        <p class="answer-en" id="agent-answer-en"></p>
+      </div>
+
+      <ol class="log" id="agent-log"></ol>
+
+      <p class="note">
+        The agent takes one action at a time and shows you each one. It will not
+        enter a password, pay for anything, or send a message on your behalf.
+      </p>
+    </section>
+
+    <!-- ------------------------------------------------------------------ -->
+    <p class="error" id="error" hidden></p>
+
+    <footer class="footer">
+      <p class="privacy" id="privacy">
+        <strong>Nothing leaves this machine.</strong>
+        Every request goes to 127.0.0.1:8000.
+      </p>
+      <div class="footer-row">
+        <button class="ghost" id="warm-btn" type="button">Warm models</button>
+        <button class="ghost" id="free-btn" type="button">Free memory</button>
+        <button class="ghost" id="cache-btn" type="button">
+          Clear cache <span id="cache-size"></span>
+        </button>
+      </div>
+      <p class="resident" id="resident"></p>
+    </footer>
+
+    <script type="module" src="panel.js"></script>
+  </body>
+</html>

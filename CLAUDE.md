@@ -99,7 +99,22 @@ GET  /audio/{name} fetch a generated WAV
 POST /models/{target}/load    warm one deliberately
 POST /models/{target}/unload  free one
 POST /unload       free model memory
+
+  -- the Chrome extension's three. JSON bodies, not form data.
+POST /translate       {text, source, target}         -> one string
+POST /translate/batch {segments[], source, target}   -> translations[], counts
+GET  /translate/cache                                -> {entries}
+POST /translate/cache/clear                          -> {cleared}
+POST /agent/act    {goal, url, title, elements[], history[], text, language}
+                                                     -> one validated action
 ```
+
+**CORS allows `chrome-extension://` as well as loopback.** A service worker's
+fetch carries its own extension origin, not the page's and not a loopback one,
+so without that widening every extension request fails preflight — and it
+fails as a bare "Failed to fetch" with nothing naming CORS. The extension id
+changes on every unpacked load, so the id cannot be pinned; the scheme is the
+tightest thing available. `smoke.py` asserts the widening is still there.
 
 `{target}` is `asr`, `tts`, `llm`, `translate` or `all`. The web Start button
 uses `all`, because the answer path needs three of them and warming only one
@@ -266,9 +281,80 @@ coming back as *"I'm afraid I'm going to have to disappoint you."*
 decode greedily** — `temp=0` reintroduces the loops; use `temp=0.2` with a
 repetition penalty.
 
+## The Chrome extension
+
+`apps/extension/` — the same models, applied to the whole web instead of to a
+chat box. Translate any page into the six languages, or tell the browser what
+to do out loud. No build step: plain MV3 and ES modules, Load unpacked.
+Its own README covers install, measured timings and limitations.
+
+Three things about it that are decisions rather than details:
+
+1. **The long jobs run in the side panel, not the service worker.** An MV3
+   worker is killed after ~30 s idle and the agent loop spends most of its
+   life waiting — for a page to load, for the model to think. A loop there
+   stops halfway with no error. A panel is an ordinary extension page with the
+   same `chrome.scripting` access and it lives exactly as long as the user is
+   watching. `background.js` is deliberately almost empty.
+
+2. **Content scripts do DOM work only; the panel does all fetching.** A
+   content script's fetch carries the *page's* origin, so reaching the service
+   would need CORS opened to every site you visit. Segments and element
+   indexes cross the message boundary as plain objects; the DOM nodes never
+   leave the page.
+
+3. **The agent may only name an element the page listed.** `content/agent.js`
+   numbers the visible interactive elements and the model picks a number.
+   A ref it invents is rejected twice — by `agent.validate()` on the service
+   and by `resolve()` in the page. It cannot write a selector, so it cannot
+   click something nobody enumerated. Twelve-step cap, three-repeat stall
+   detection, and a refusal list for passwords/payments/deletions.
+
+**Page translation is honest about its cost, and the numbers are measured** —
+29 segments of a real government page, English to Assamese, warm:
+
+| | wall clock |
+|---|---|
+| one request per segment | 16.2 s |
+| batched, when the reply parses | 11.8 s — **1.37×** |
+| all cached | 0.013 s — **~900×** |
+
+Batching is the intuitive optimisation and the weakest one; output tokens
+dominate. Worse, **one batch in five comes back renumbered** and has to be
+thrown away and re-run segment by segment, which nets batching out to roughly
+break-even. **The cache is the one that matters.** So the extension sorts
+segments by viewport position and sends the visible screen first: a dense
+first screen is ~12 s cold and instant once seen. "A whole site in seconds"
+is not true and the UI does not claim it — it shows translated / from-cache /
+skipped counts instead.
+
+**Marker numbers in a batch are a checksum, not an index.** Measured: asked to
+translate nine segments, the model absorbed segment 6 (`"before applying."`, a
+sentence fragment) into its translation of segment 5 and then renumbered
+everything after it — emitting `<<6>>` for input 7 and so on. The first
+version trusted those numbers and re-ran only the marker that went missing,
+which silently gave two segments each other's translations and put
+"Published 2024" inside a link labelled "eligibility rules". Nothing raised.
+`_translate_batch` now accepts a reply only when every marker `1..N` returns
+exactly once, and otherwise re-runs the whole batch singly. If you make
+batching cleverer, keep that all-or-nothing property.
+
+And note the second-order hazard: **the cache made that bug survive its own
+fix**, because the wrong text was already stored. `POST /translate/cache/clear`
+and the panel button exist for that.
+
 ## Layout
 
 ```
+apps/extension/         MV3, no build step. Load unpacked. See its README.
+  background.js          toolbar button + context menu, nothing else
+  lib/api.js             the only module that fetches the service
+  lib/tabs.js            injection, blocked-page rules, waiting for a load
+  lib/run.js             runTranslation() and runAgent()
+  content/translate.js   DOM walk, viewport ordering, apply, restore
+  content/agent.js       element index, action execution, the highlight ring
+  sidepanel/             the UI, and the owner of both loops
+
 apps/web/               Next.js 15 App Router, TS, Tailwind 4. The chatbot.
   src/components/chat/   chat-shell (threads + persistence), chat-sidebar,
                          chat-messages, chat-composer, mic-equalizer (live
@@ -289,7 +375,12 @@ services/asr/           Python 3.11, FastAPI, managed with uv (NOT pip/conda).
     knowledge.py        the ~20 English passages, by sector
     retrieval.py        BM25 over them. MIN_SCORE is measured, not guessed.
     llm.py              answer() grounded, answer_general() ungrounded
-    translate.py        Sarvam-Translate, both legs. Read its docstring first.
+    translate.py        Sarvam-Translate, both legs, plus batched segment
+                        translation. Read its docstring first.
+    translate_cache.py  skip rules + the persistent segment cache
+    page.py             whole-page translation: filter, cache, dedupe, batch
+    agent.py            the browsing agent's brain. One action per call; the
+                        loop lives in the extension, which can see the DOM.
     chat.py             orchestrates the middle of the cascade
     pipeline.py         transcribe(), synthesize(), roundtrip()
     main.py             FastAPI app
