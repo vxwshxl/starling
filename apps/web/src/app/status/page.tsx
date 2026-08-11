@@ -50,7 +50,7 @@ export default function StatusPage() {
         </main>
 
         <footer className="tile-rise mt-8 text-xs text-muted-foreground [animation-delay:360ms]">
-          Six languages, recognised and spoken natively. Answers are retrieved
+          Five languages, recognised and spoken natively. Answers are retrieved
           from a fixed offline knowledge base and phrased by a local model —
           nothing leaves this machine. Translation between languages is the
           remaining gap.

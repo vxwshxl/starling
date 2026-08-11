@@ -132,11 +132,45 @@
    *  user is actually looking at.
    */
   function regionOf(element) {
+    // The site's search box outranks everything, including main content.
+    //
+    // This is the counterweight to the rule below, and it exists because that
+    // rule went too far. Demoting nav fixed a results page where the products
+    // were buried under sixty header controls -- but it also demoted the
+    // search box, which lives in the header on every shop on the web. On an
+    // Amazon product page, main content alone fills the whole budget, so the
+    // search box fell off the end of the list entirely: asked to look up a
+    // different product, the model could not see the one control that would
+    // have done it, and clicked a random link in the page instead.
+    //
+    // "Find X on this site" is the commonest instruction there is, and the
+    // search box is how it gets done. It is never ranked below the content it
+    // searches.
+    if (isSearchControl(element)) return -1;
     if (element.closest("main, [role=main], #main, #content, article")) return 0;
     if (element.closest("nav, [role=navigation], header, [role=banner]")) return 2;
     if (element.closest("footer, [role=contentinfo]")) return 3;
-    if (element.closest("aside, [role=complementary], [role=search]")) return 2;
+    if (element.closest("aside, [role=complementary]")) return 2;
     return 1; // unlandmarked page body -- most of the web
+  }
+
+  /** The search box, and the button that submits it. */
+  function isSearchControl(element) {
+    const tag = element.tagName;
+    const inSearchLandmark = element.closest('[role="search"], form[role="search"]');
+    if (inSearchLandmark && (tag === "INPUT" || tag === "BUTTON" || tag === "TEXTAREA")) {
+      return true;
+    }
+    if (tag !== "INPUT" && tag !== "TEXTAREA") return false;
+    if ((element.type || "").toLowerCase() === "search") return true;
+    // Sites that use a plain text input and only say "search" in the label.
+    const hints = [
+      element.getAttribute("aria-label"),
+      element.getAttribute("placeholder"),
+      element.getAttribute("name"),
+      element.id,
+    ].join(" ");
+    return /search|query|\bfind\b/i.test(hints);
   }
 
   const REGION_TAG = ["", "", "nav", "foot"];

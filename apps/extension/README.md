@@ -1,6 +1,6 @@
 # Starling for Chrome
 
-Read any website in Assamese, Bodo, Manipuri, Nepali, Santali or Sylheti, and
+Read any website in Assamese, Bodo, Bengali, Manipuri or Nepali, and
 tell the browser what to do out loud. Everything runs against the Starling
 service on `127.0.0.1:8000` — the same models as the main app, on the same
 machine.
@@ -274,9 +274,9 @@ against the extension's origin rather than the page that requested it.
   sentence, but `<a>` cannot be — the translation would have to be split back
   across nodes, and the target languages reorder words. So "Read the
   [eligibility rules] before applying" goes to the model as three fragments.
-- **Ol Chiki and Meetei Mayek need fonts.** Without *Noto Sans Ol Chiki* or
-  *Noto Sans Meetei Mayek* installed, Santali and Manipuri render as empty
-  boxes — which looks like the model failed rather than like a missing font.
+- **Meetei Mayek needs a font.** Without *Noto Sans Meetei Mayek* installed,
+  Manipuri renders as empty boxes — which looks like the model failed rather
+  than like a missing font.
 - **Indic → Indic is refused,** not pivoted. Sarvam-Translate's open checkpoint
   is English↔Indic only. The panel disables the button and says so.
 - **No streaming.** A chunk appears when the whole chunk is done.

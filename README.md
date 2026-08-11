@@ -11,7 +11,7 @@ Hear the answer back **in your own voice**.
 
 <br />
 
-[![languages](https://img.shields.io/badge/languages-6_native-5a45ad)](#languages)
+[![languages](https://img.shields.io/badge/languages-5_native-5a45ad)](#languages)
 [![offline](https://img.shields.io/badge/runs-fully_offline-14874e)](#offline-by-design)
 [![platform](https://img.shields.io/badge/Apple_Silicon-MLX_·_CoreML_·_ONNX-333)](#requirements)
 
@@ -40,24 +40,27 @@ who cannot check it, is the failure this is engineered against.
 
 ## Languages
 
-Six, all native in both directions — no fallbacks, no stand-ins.
+Five, every one native at every stage — recognition, translation and voice.
+No fallbacks, no stand-ins, nothing borrowing another language's model.
 
 | Language | | Script | Recognition | Voice |
 |---|---|---|---|---|
-| Assamese | অসমীয়া | Bengali-Assamese | Whisper | OmniVoice |
+| Assamese | অসমীয়া | Assamese | Whisper | OmniVoice |
 | Bodo | बर' | Devanagari | IndicConformer | OmniVoice |
-| Sylheti | সিলেটি | Bengali-Assamese | Whisper | OmniVoice¹ |
+| Bengali | বাংলা | Bengali | Whisper | OmniVoice |
 | Manipuri | ꯃꯤꯇꯩꯂꯣꯟ | Meetei Mayek | IndicConformer | OmniVoice |
 | Nepali | नेपाली | Devanagari | IndicConformer | OmniVoice |
-| Santali | ᱥᱟᱱᱛᱟᱲᱤ | Ol Chiki | IndicConformer | OmniVoice |
 
-<sub>¹ Synthesised as standard Bengali; pronunciation is approximate. The app
-says so in the interface.</sub>
+<sub>Assamese and Bengali are written in the same script — ISO 15924 calls it
+`Beng` — and each is named after its own language here rather than as
+"Bengali-Assamese".</sub>
 
 **Not supported, and not pretended otherwise:** Khasi, Garo, Nagamese, Ao,
 Angami, Adi, Nyishi, Apatani, Karbi, Dimasa, Rabha — no model covers them in
 either direction. Mizo, Kokborok and Sikkimese can be *spoken* but not
 recognised, so they stay out of the picker rather than half-working in it.
+Sylheti and Santali were both dropped for the same reason — Sylheti was
+standard Bengali wearing a different label, so Bengali itself replaced it.
 
 Coverage is uneven and the UI reports it per language, per stage.
 
@@ -94,7 +97,7 @@ a correct answer in Bodo.
 
 `apps/extension/` puts the same models behind a Chrome side panel.
 
-- **Translate any page** into the six languages, in place, one click to
+- **Translate any page** into the five languages, in place, one click to
   restore. Visible screen first; the cache makes a revisited page instant.
 - **Drive the browser by voice.** Say what you want in your own language; the
   agent reads the page, takes one action, looks again, and repeats — showing

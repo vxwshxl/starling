@@ -45,7 +45,7 @@ MAX_ENTRIES = 20_000
 #: A segment is worth sending to the model only if it contains a run of at
 #: least two letters. `\w` would match digits, and "2024" or "1,299" is not
 #: translatable text. Unicode-aware, because the source page may already be in
-#: Devanagari or Ol Chiki -- this module is used in both directions.
+#: Devanagari, Bengali or Meetei Mayek -- it is used in both directions.
 _HAS_WORD = re.compile(r"[^\W\d_]{2,}", re.UNICODE)
 
 #: Bare URLs, emails, absolute paths and filenames. These survive translation

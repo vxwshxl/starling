@@ -226,19 +226,32 @@ Verified against the installed packages, not assumed:
 
 | Language | ISO | Script | ASR | TTS (OmniVoice) | Translate (Sarvam) |
 |---|---|---|---|---|---|
-| Assamese | `as` | Bengali-Assamese | `as` native — Whisper | `as` native | `Assamese` |
+| Assamese | `as` | Assamese | `as` native — Whisper | `as` native | `Assamese` |
 | Bodo | `brx` | **Devanagari** | `brx` native — IndicConformer | `brx` native | `Bodo` |
-| Sylheti / Barak Bengali | `bn` | Bengali-Assamese | `bn` native — Whisper | `bn` **FALLBACK** | `Bengali` **FALLBACK** |
+| Bengali | `bn` | Bengali | `bn` native — Whisper | `bn` native | `Bengali` |
 | Manipuri (Meitei) | `mni` | Meetei Mayek | `mni` native — IndicConformer | `mni` native | `Manipuri` |
 | Nepali | `ne` | Devanagari | `ne` native — IndicConformer | `npi` native | `Nepali` |
-| Santali | `sat` | Ol Chiki | `sat` native — IndicConformer | `sat` native | `Santali` |
 | Khasi | `kha` | Latin | none | none — *disabled* | none |
 | Mizo | `lus` | Latin | none | `lus` native — *disabled* | none |
+
+**Every enabled language is native in all three stages** — no fallbacks left.
+That is the bar for adding one: a language that would borrow another's
+recogniser, voice or translation does not go in the picker. Sylheti and
+Santali were both dropped; Sylheti was Bengali in everything but the label, so
+Bengali itself took its place. The fallback machinery (`asr_native`,
+`tts_native`, `translate_native`, `warnings()`) is deliberately kept for the
+next language that needs it.
+
+**Assamese and Bengali share one script.** ISO 15924 has a single code for it,
+`Beng`, and `Language.script` carries that — but `script_name` follows the
+language ("Assamese" / "Bengali"), because telling an Assamese speaker their
+script is "Bengali-Assamese" reads as being told it belongs to someone else.
+The two fields answer different questions; do not reconcile them.
 
 The key asymmetry: **the three stages do not cover the same languages**, so
 every language carries a separate code *and* a separate "is this real?" flag
 for each. Whisper knows 100 languages; OmniVoice knows 646; Sarvam-Translate
-knows the 22 scheduled Indian languages, which happens to be all six of ours.
+knows the 22 scheduled Indian languages, which happens to be all five of ours.
 
 **There is no longer one recogniser.** Whisper has no Bodo at any model size,
 so `Language.asr_backend` names a backend per language and `models.get_asr()`
@@ -275,7 +288,7 @@ error, and both were initially misread as 4-bit quantisation damage:
    cue and the model has to guess it is its turn.
 
 The symptoms were repetition loops (`এক মিনিটৰ আগতে এক মিনিটৰ আগতে`), Santali
-and Manipuri collapsing to one repeated syllable, and *"my son has a fever"*
+(since dropped) and Manipuri collapsing to one repeated syllable, and *"my son has a fever"*
 coming back as *"I'm afraid I'm going to have to disappoint you."*
 `translate._prompt()` builds the turn structure by hand instead. Also **do not
 decode greedily** — `temp=0` reintroduces the loops; use `temp=0.2` with a
@@ -284,7 +297,7 @@ repetition penalty.
 ## The Chrome extension
 
 `apps/extension/` — the same models, applied to the whole web instead of to a
-chat box. Translate any page into the six languages, or tell the browser what
+chat box. Translate any page into the five languages, or tell the browser what
 to do out loud. No build step: plain MV3 and ES modules, Load unpacked.
 Its own README covers install, measured timings and limitations.
 

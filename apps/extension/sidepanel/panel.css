@@ -88,13 +88,13 @@ body {
   flex-direction: column;
   background: var(--background);
   color: var(--foreground);
-  /* The Indic fallbacks are load-bearing, not politeness. Ol Chiki and Meetei
-     Mayek have no coverage in the default UI font on macOS, and without a
-     named fallback a Santali reply renders as empty boxes -- which looks like
-     the model failed rather than like a missing font. */
+  /* The Indic fallbacks are load-bearing, not politeness. Meetei Mayek has no
+     coverage in the default UI font on macOS, and without a named fallback a
+     Manipuri reply renders as empty boxes -- which looks like the model
+     failed rather than like a missing font. */
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif,
-    "Noto Sans Bengali", "Noto Sans Devanagari", "Noto Sans Ol Chiki",
-    "Noto Sans Meetei Mayek", "Noto Sans";
+    "Noto Sans Bengali", "Noto Sans Devanagari", "Noto Sans Meetei Mayek",
+    "Noto Sans";
   font-size: 13px;
   line-height: 1.55;
   overflow: hidden;

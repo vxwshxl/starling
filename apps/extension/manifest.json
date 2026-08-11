@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Starling — offline browsing in your language",
   "version": "0.1.0",
-  "description": "Translate any page into Assamese, Bodo, Manipuri, Nepali, Santali or Sylheti, and drive the browser by voice. Everything runs on this machine.",
+  "description": "Translate any page into Assamese, Bodo, Bengali, Manipuri or Nepali, and drive the browser by voice. Everything runs on this machine.",
   "minimum_chrome_version": "116",
 
   "icons": {

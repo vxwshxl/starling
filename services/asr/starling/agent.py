@@ -200,7 +200,7 @@ The actions are:
 Rules:
 - NEVER say something has been done unless it appears in ACTIONS ALREADY TAKEN. If the user asked you to do something and you have not done it yet, do it -- do not reply "done" claiming it happened. Reporting an order as placed when you never pressed the button is the worst mistake you can make.
 - FIRST, read the page text and the conversation. If either already answers what the user asked, reply with "done" and put the answer in "message". Do not click anything to look up a number you were already told. Most questions end this way.
-- If the user asks you to translate the page, to show it in their language, or to put it in Assamese/Bodo/Nepali/Manipuri/Santali, reply exactly {"action":"translate_page","why":"..."}. Do not use "ask" for this.
+- If the user asks you to translate the page, to show it in their language, or to put it in Assamese/Bodo/Bengali/Manipuri/Nepali, reply exactly {"action":"translate_page","why":"..."}. Do not use "ask" for this.
 - "ref" MUST be one of the reference codes listed on the page. Never invent one. If what you need is not listed, scroll to look for it or navigate somewhere it will be.
 - Do one thing per reply. Do not plan several steps ahead in one action.
 - Look at the actions already taken. If the last one did not change anything, do something different -- never repeat a failing action.
@@ -547,7 +547,11 @@ def validate(parsed: dict[str, Any], refs: Any) -> Decision:
         args["ref"] = ref
 
     if action == "type":
-        args["text"] = str(args["text"])
+        # Stripped: the model regularly emits a trailing space or "\n" inside
+        # the JSON string, and a newline typed into a contenteditable inserts
+        # a line break rather than being ignored. Nothing legitimate here ever
+        # needs leading or trailing whitespace.
+        args["text"] = str(args["text"]).strip()
         # Optional, and defaulted here rather than in the schema so the model
         # omitting it is not a validation failure.
         args["submit"] = bool(parsed.get("submit", False))

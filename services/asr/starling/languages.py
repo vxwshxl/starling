@@ -8,18 +8,23 @@ separate code and a separate "is this real?" flag for each stage. Verified
 against the installed packages, not assumed:
 
   ASR  mlx_whisper.tokenizer.LANGUAGES -- 100 languages. Has `as` and `bn`.
-       Has NO code for Bodo, Khasi or Mizo.
+       Has NO code for Bodo, Khasi or Mizo, which is why Bodo, Manipuri and
+       Nepali run on IndicConformer instead (see `asr_backend`).
   TTS  omnivoice.utils.lang_map.LANG_IDS -- 646 languages. Has `as`, `bn`,
-       AND `brx` (Bodo) and `lus` (Mizo). Has NO Khasi, no Sylheti.
+       AND `brx` (Bodo) and `lus` (Mizo). Has NO Khasi.
 
-So Bodo is asymmetric: we cannot recognise it but we CAN speak it natively.
-Bodo is Tibeto-Burman, not Indo-Aryan, so pointing Whisper at Assamese for it
-is a genuine hack that will produce mangled transcripts. It is wired up so the
-demo path exists end to end, and flagged loudly in the lab UI so nobody
-mistakes fallback output for real recognition. The fix is the phase-2 swap to
-ai4bharat/indic-conformer-600m-multilingual, which covers Assamese and Bodo
-properly. When that lands, `asr_native` flips to True and nothing else in the
-codebase changes.
+**Every enabled language is native in all three stages.** There is no fallback
+anywhere in the list any more, and that is the bar for adding one: if a
+language would have to borrow another's recogniser, voice or translation, it
+does not go in the picker. An earlier list carried Sylheti, which was Bengali
+in everything but the label -- Bengali's ASR, Bengali's voice, Bengali's
+translation, and three warnings saying so. Bengali itself is in the list now,
+which is the honest version of the same capability.
+
+The machinery for fallbacks survives regardless -- `asr_native`,
+`tts_native`, `translate_native` and `warnings()` all still work -- because
+the next language somebody wants will probably need it, and a half-supported
+language that announces itself is far better than one that does not.
 """
 
 from __future__ import annotations
@@ -69,7 +74,8 @@ class Language:
     asr_backend: str | None = None
     """Which ASR backend recognises this language, or None for the configured
     default. Set per language because no single recogniser covers them all:
-    Whisper has no Bodo, IndicConformer has no Sylheti."""
+    Whisper has no Bodo, Manipuri or Nepali; IndicConformer has one
+    checkpoint per language rather than a multilingual one."""
 
     translate_name: str | None = None
     """English name Sarvam-Translate is addressed by, or None if it cannot
@@ -79,8 +85,9 @@ class Language:
     translator names languages its own way. It takes a plain English word in
     the prompt ("Translate the text below to Bodo.") rather than an ISO code,
     and it recognises the 22 scheduled languages under their official English
-    names -- so Sylheti, which is not scheduled, has to travel as Bengali just
-    as it already does for TTS."""
+    names. Every language enabled here is scheduled, so every one is covered;
+    an unscheduled language would need `translate_native=False` and a
+    stand-in, which is the arrangement this list no longer has."""
 
     translate_native: bool = True
     """False when translate_name is a stand-in rather than the real language."""
@@ -124,8 +131,15 @@ LANGUAGES: dict[str, Language] = {
         name="Assamese",
         native_name="অসমীয়া",
         iso="as",
+        # Assamese and Bengali share one script. ISO 15924 gives it a single
+        # code, `Beng`, and the two languages differ only in a couple of
+        # letters -- but "Bengali-Assamese" in an Assamese speaker's language
+        # picker reads as being told their script belongs to someone else. So
+        # `script` stays the true ISO code and `script_name` follows the
+        # language. Do not "correct" one to match the other; they are
+        # answering different questions.
         script="Beng",
-        script_name="Bengali-Assamese",
+        script_name="Assamese",
         asr_code="as",
         asr_native=True,
         tts_code="as",
@@ -159,28 +173,29 @@ LANGUAGES: dict[str, Language] = {
             "Whisper is not involved and cannot be -- it has no Bodo code."
         ),
     ),
-    "syl": Language(
-        code="syl",
-        name="Sylheti / Barak Valley Bengali",
-        native_name="সিলেটি",
-        # The brief treats this as a Bengali dialect variant, so iso is "bn".
-        # (ISO 639-3 does assign Sylheti its own code, "syl", but no model we
-        # use recognises it, and the brief's framing is the operative one.)
+    "bn": Language(
+        code="bn",
+        name="Bengali",
+        native_name="বাংলা",
         iso="bn",
+        # Same script as Assamese; see the note on that entry for why the
+        # display name differs while the ISO code does not.
         script="Beng",
-        script_name="Bengali-Assamese",
+        script_name="Bengali",
         asr_code="bn",
         asr_native=True,
-        # OmniVoice has no Sylheti; standard Bengali is the closest voice.
         tts_code="bn",
-        tts_native=False,
+        tts_native=True,
         translate_name="Bengali",
-        translate_native=False,
         priority=3,
         notes=(
-            "Handled as a Bengali dialect. Whisper's 'bn' is standard Bengali, "
-            "so heavily dialectal Sylheti speech will degrade. OmniVoice has no "
-            "Sylheti either; output is Bengali-accented."
+            "Native in all three stages, with no fallback anywhere: Whisper "
+            "has 'bn', OmniVoice has 'bn', and Bengali is a scheduled language "
+            "so Sarvam-Translate covers it. This entry replaced a Sylheti one "
+            "that was Bengali in everything but the label -- it borrowed "
+            "Bengali's ASR, voice and translation and warned about all three. "
+            "Naming the thing we actually run is more honest than shipping a "
+            "language the models do not have."
         ),
     ),
     "mni": Language(
@@ -226,25 +241,6 @@ LANGUAGES: dict[str, Language] = {
             "Widely spoken in Sikkim and the Darjeeling/Dooars belt. ASR code "
             "is 'ne' but OmniVoice's code is 'npi' -- the two-code design earns "
             "its keep here."
-        ),
-    ),
-    "sat": Language(
-        code="sat",
-        name="Santali",
-        native_name="ᱥᱟᱱᱛᱟᱲᱤ",
-        iso="sat",
-        script="Olck",
-        script_name="Ol Chiki",
-        asr_code="sat",
-        asr_native=True,
-        asr_backend="indic-conformer",
-        tts_code="sat",
-        tts_native=True,
-        translate_name="Santali",
-        priority=6,
-        notes=(
-            "Scheduled language, written in Ol Chiki. Spoken in the Assam tea "
-            "belt as well as Jharkhand and Odisha. Both halves native."
         ),
     ),
     "kha": Language(

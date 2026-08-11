@@ -40,7 +40,7 @@ class Settings:
     llm_model: str = _env("STARLING_LLM_MODEL", "mlx-community/Qwen2.5-3B-Instruct-4bit")
     # Sarvam-Translate, a Gemma-3-4B fine-tune covering all 22 scheduled
     # Indian languages -- the only model here that can write Bodo, Manipuri or
-    # Santali. ~2.6 GB in 4-bit. See translate.py for why not IndicTrans2.
+    # Manipuri. ~2.6 GB in 4-bit. See translate.py for why not IndicTrans2.
     translate_model: str = _env(
         "STARLING_TRANSLATE_MODEL", "mlx-community/sarvam-translate-mlx-4bit"
     )

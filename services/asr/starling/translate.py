@@ -12,7 +12,7 @@ tokenizer archaeology and no version standoff.
 
 What it buys, and this is the whole product promise: Sarvam-Translate covers
 all 22 scheduled Indian languages, which includes every one of Starling's six
--- Assamese, Bodo, Manipuri, Nepali and Santali among them. Those are exactly
+-- Assamese, Bodo, Bengali, Manipuri and Nepali among them. Those are exactly
 the languages no general-purpose LLM can write. A 4B model asked to answer in
 Bodo produces confident nonsense; the same model fine-tuned on Bodo
 translation produces Bodo.
@@ -48,9 +48,9 @@ _tokenizer: Any | None = None
 #: Ceiling on a single translation.
 #:
 #: Has to sit well above llm.MAX_TOKENS, not merely match it: Indic scripts
-#: tokenise far less efficiently than English -- Ol Chiki and Meetei Mayek in
-#: particular run several tokens per syllable -- so the same answer needs
-#: noticeably more tokens in Santali than it did in English. Too low and a
+#: tokenise far less efficiently than English -- Meetei Mayek in particular
+#: runs several tokens per syllable -- so the same answer needs noticeably
+#: more tokens in Manipuri than it did in English. Too low and a
 #: long answer is silently cut off mid-sentence, which in the user's language
 #: is invisible to anyone reading the English. This is a runaway guard against
 #: repetition loops, not a length budget.
@@ -114,7 +114,8 @@ def _prompt(text: str, target: str) -> str:
       2. It ignores `add_generation_prompt`, so the prompt ends after
          <end_of_turn> with no <start_of_turn>model cue. The model is left to
          guess that it is its turn, and what came back was the repetition
-         loops: "এক মিনিটৰ আগতে এক মিনিটৰ আগতে", Santali collapsing to one
+         loops: "এক মিনিটৰ আগতে এক মিনিটৰ আগতে", Santali (since dropped)
+         collapsing to one
          syllable, and Assamese "my son has a fever" rendered as "I'm afraid
          I'm going to have to disappoint you."
 
@@ -136,7 +137,7 @@ def _run(text: str, target: str) -> str:
     prompt = _prompt(text, target)
     # Do NOT run this greedy. temp=0 makes the 4-bit checkpoint fall into
     # repetition loops that never terminate -- measured: "এক মিনিটৰ আগতে" twice
-    # in Assamese, and Santali and Manipuri degenerating into one syllable
+    # in Assamese, and Manipuri degenerating into one syllable
     # repeated until max_tokens. A little temperature plus a repetition penalty
     # fixes it; the model card likewise samples at 0.01 rather than taking the
     # argmax. Still low enough that translation does not wander.
