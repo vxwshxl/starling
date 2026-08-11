@@ -1,366 +1,582 @@
 /* Side panel styling.
  *
- * Matches apps/web deliberately: the same near-monochrome neutral scale, the
- * same #5a45ad accent, the same radii. It is the same product in a different
- * frame, and a panel with its own visual language would read as a third-party
- * add-on rather than part of Starling.
+ * The tokens below are lifted from apps/web/src/app/globals.css so the panel
+ * and the site are the same product, not two that resemble each other. Read
+ * the "Starling brand layer" comment there before changing any of them --
+ * several of the values are deliberate departures from stock shadcn and carry
+ * their reasons in that file.
  *
- * A side panel is a narrow, tall, resizable column that follows the browser's
- * theme, so everything below is fluid-width and every colour is a token with a
- * dark counterpart. */
+ * The rule that governs everything here:
+ *
+ *   The UI is monochrome and colour is a signal, not decoration.
+ *
+ * Chrome, buttons and message bubbles are pure greyscale at maximum contrast.
+ * That leaves green, amber and red unspent, so the states this thing has to
+ * distinguish at a glance -- service reachable, waiting on a confirmation, a
+ * step that failed -- are the only coloured things on screen and cannot be
+ * mistaken for styling. An earlier version of this panel used the violet from
+ * the app icon as an accent, which competed with exactly those signals; the
+ * violet now appears only in the icon itself.
+ *
+ * Shape: a chat client. Fixed header, scrolling thread, composer pinned to
+ * the bottom, everything fluid-width because a side panel is resizable. */
 
 :root {
   color-scheme: light dark;
 
-  --bg: #ffffff;
-  --fg: #171717;
-  --muted: #737373;
-  --subtle: #f5f5f5;
-  --border: #e5e5e5;
-  --accent: #5a45ad;
-  --accent-fg: #ffffff;
-  --accent-soft: #f1eefb;
-  --ok: #15803d;
-  --warn: #b45309;
-  --danger: #b91c1c;
-  --danger-soft: #fef2f2;
-  --radius: 8px;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.13 0 0);
+  --card: oklch(1 0 0);
+  --primary: oklch(0.13 0 0);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.96 0 0);
+  --muted: oklch(0.965 0 0);
+  /* 0.44, not shadcn's 0.556: at 0.556 secondary text fails AA on white. */
+  --muted-foreground: oklch(0.44 0 0);
+  --accent: oklch(0.95 0 0);
+  --border: oklch(0.87 0 0);
+  --input: oklch(0.84 0 0);
+  --ring: oklch(0.13 0 0 / 55%);
+
+  --success: oklch(0.52 0.15 150);
+  --warning: oklch(0.55 0.13 75);
+  --destructive: oklch(0.55 0.22 27);
+
+  --radius: 0.625rem;
+  --shadow-pop: 0 10px 30px -12px oklch(0 0 0 / 0.25), 0 2px 8px -4px oklch(0 0 0 / 0.12);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0a0a0a;
-    --fg: #fafafa;
-    --muted: #a1a1a1;
-    --subtle: #171717;
-    --border: #2a2a2a;
-    --accent: #8b76d9;
-    --accent-fg: #14101f;
-    --accent-soft: #1c1730;
-    --ok: #4ade80;
-    --warn: #fbbf24;
-    --danger: #f87171;
-    --danger-soft: #2a1414;
+    /* True black, not shadcn's 0.145 grey -- see globals.css. */
+    --background: oklch(0 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.135 0 0);
+    --primary: oklch(1 0 0);
+    --primary-foreground: oklch(0.11 0 0);
+    --secondary: oklch(0.22 0 0);
+    --muted: oklch(0.19 0 0);
+    --muted-foreground: oklch(0.74 0 0);
+    --accent: oklch(0.24 0 0);
+    /* Heavier than stock: against true black a 10% white border is invisible,
+       and this layout is held together by its dividing lines. */
+    --border: oklch(1 0 0 / 20%);
+    --input: oklch(1 0 0 / 26%);
+    --ring: oklch(1 0 0 / 60%);
+
+    --success: oklch(0.76 0.18 150);
+    --warning: oklch(0.8 0.14 80);
+    --destructive: oklch(0.68 0.21 25);
+
+    --shadow-pop: 0 14px 40px -12px oklch(0 0 0 / 0.7), 0 0 0 1px oklch(1 0 0 / 0.06);
   }
 }
 
 * { box-sizing: border-box; }
 
 /* `hidden` is how every toggle in panel.js works, and it does not survive on
- * its own: the browser's `[hidden] { display: none }` comes from the user-agent
- * stylesheet, so any author rule that sets `display` on the same element wins
- * on cascade order alone. `.progress { display: flex }` was therefore showing
- * the progress bar and Stop button on a panel that had not translated
- * anything. Author-level and !important, so it beats the layout rules below
- * regardless of what they set. */
+ * its own: the browser's `[hidden] { display: none }` comes from the
+ * user-agent stylesheet, so any author rule setting `display` on the same
+ * element wins on cascade order alone. Author-level and !important. */
 [hidden] { display: none !important; }
+
+html, body { height: 100%; }
 
 body {
   margin: 0;
-  padding: 0 14px 14px;
-  background: var(--bg);
-  color: var(--fg);
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+  color: var(--foreground);
   /* The Indic fallbacks are load-bearing, not politeness. Ol Chiki and Meetei
      Mayek have no coverage in the default UI font on macOS, and without a
-     named fallback a Santali translation renders as a row of empty boxes --
-     which looks like the model failed rather than like a missing font. */
+     named fallback a Santali reply renders as empty boxes -- which looks like
+     the model failed rather than like a missing font. */
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif,
     "Noto Sans Bengali", "Noto Sans Devanagari", "Noto Sans Ol Chiki",
     "Noto Sans Meetei Mayek", "Noto Sans";
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.55;
+  overflow: hidden;
 }
+
+/* One very wide, very faint wash, as on the site: the panel has a light
+   source instead of being a flat slab. Greyscale, because hue means state. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    40rem 26rem at 15% -12%,
+    color-mix(in oklch, var(--foreground) 6%, transparent),
+    transparent 70%
+  );
+}
+
+button { font: inherit; color: inherit; }
+
+:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 
 /* --- header ------------------------------------------------------------- */
 
 .header {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 12px 0 10px;
-  position: sticky;
-  top: 0;
-  background: var(--bg);
+  gap: 8px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
-  z-index: 5;
+  flex: none;
 }
 .mark { border-radius: 6px; flex: none; }
 .header-text { flex: 1; min-width: 0; }
-.header h1 { margin: 0; font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
+.header h1 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 620;
+  letter-spacing: -0.012em;
+}
 .page-title {
   margin: 0;
-  font-size: 11px;
-  color: var(--muted);
+  font-size: 10.5px;
+  color: var(--muted-foreground);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.icon-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.icon-btn:hover { background: var(--accent); color: var(--foreground); }
+
 .status {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 27px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted-foreground); }
+.dot.ok { background: var(--success); }
+.dot.bad { background: var(--destructive); }
+.dot.busy { background: var(--warning); animation: pulse 1.1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.25; } }
+
+/* --- custom dropdown ---------------------------------------------------- */
+/*
+ * Not a <select>. A native select renders as an opaque OS menu that ignores
+ * every token above -- on macOS it is a light popup even in dark mode, and it
+ * was the one element in the panel that looked like it belonged to a
+ * different application.
+ */
+
+.combo { position: relative; flex: none; }
+
+.combo-button {
   display: flex;
   align-items: center;
   gap: 5px;
-  flex: none;
-  padding: 3px 8px;
-  font: inherit;
-  font-size: 11px;
-  color: var(--muted);
-  background: var(--subtle);
+  max-width: 116px;
+  padding: 4px 7px;
+  background: var(--secondary);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 8px;
+  font-size: 11.5px;
   cursor: pointer;
+  transition: background 0.12s ease;
 }
-.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; }
-.dot.ok { background: var(--ok); }
-.dot.bad { background: var(--danger); }
-.dot.busy { background: var(--warn); animation: pulse 1.1s ease-in-out infinite; }
-@keyframes pulse { 50% { opacity: 0.25; } }
+.combo-button:hover { background: var(--accent); }
+.combo-button .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.combo-button svg { flex: none; opacity: 0.55; transition: transform 0.15s ease; }
+.combo[data-open="true"] .combo-button svg { transform: rotate(180deg); }
 
-/* --- language ----------------------------------------------------------- */
-
-.lang-row { display: flex; align-items: end; gap: 8px; padding: 12px 0 0; }
-.field { flex: 1; min-width: 0; display: block; }
-.field-label {
-  display: block;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-  margin-bottom: 3px;
-}
-.arrow { color: var(--muted); padding-bottom: 7px; }
-
-select, textarea {
-  width: 100%;
-  font: inherit;
-  color: var(--fg);
-  background: var(--bg);
+.combo-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  z-index: 40;
+  min-width: 190px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  animation: pop 0.11s ease-out;
+}
+@keyframes pop {
+  from { opacity: 0; transform: translateY(-3px) scale(0.985); }
+}
+
+.combo-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
   padding: 6px 8px;
-}
-select:focus-visible, textarea:focus-visible, button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-
-.caveat {
-  margin: 8px 0 0;
-  padding: 7px 9px;
-  font-size: 11.5px;
-  color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 9%, transparent);
-  border-radius: var(--radius);
-}
-
-/* --- tabs --------------------------------------------------------------- */
-
-.tabs {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2px;
-  margin: 14px 0 0;
-  padding: 2px;
-  background: var(--subtle);
-  border-radius: var(--radius);
-}
-.tabs button {
-  font: inherit;
-  font-weight: 550;
-  padding: 6px;
+  background: transparent;
   border: 0;
-  border-radius: calc(var(--radius) - 2px);
-  background: transparent;
-  color: var(--muted);
+  border-radius: calc(var(--radius) - 4px);
+  text-align: left;
   cursor: pointer;
 }
-.tabs button[aria-selected="true"] {
-  background: var(--bg);
-  color: var(--fg);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.07);
-}
+.combo-option:hover,
+.combo-option[data-active="true"] { background: var(--accent); }
+.combo-option .native { font-size: 12.5px; }
+.combo-option .latin { font-size: 11px; color: var(--muted-foreground); margin-left: auto; }
+.combo-option .tick { width: 12px; flex: none; opacity: 0; }
+.combo-option[aria-selected="true"] .tick { opacity: 1; }
 
-.panel { padding: 14px 0 0; }
+/* --- thread ------------------------------------------------------------- */
 
-/* --- buttons ------------------------------------------------------------ */
-
-button.primary, button.secondary, button.ghost {
-  font: inherit;
-  font-weight: 550;
-  border-radius: var(--radius);
-  cursor: pointer;
-  padding: 8px 12px;
-}
-button.primary {
-  width: 100%;
-  background: var(--accent);
-  color: var(--accent-fg);
-  border: 1px solid var(--accent);
-}
-button.secondary {
-  width: 100%;
-  background: var(--bg);
-  color: var(--fg);
-  border: 1px solid var(--border);
-}
-button.ghost {
-  background: transparent;
-  color: var(--muted);
-  border: 1px solid var(--border);
-  padding: 5px 9px;
-  font-size: 11.5px;
-}
-button.primary:hover { filter: brightness(1.08); }
-button.secondary:hover, button.ghost:hover { background: var(--subtle); }
-button:disabled { opacity: 0.5; cursor: not-allowed; filter: none; }
-button.stop { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 35%, var(--border)); }
-
-/* --- translate ---------------------------------------------------------- */
-
-.progress { margin-top: 12px; display: flex; align-items: center; gap: 9px; }
-.bar {
+.thread {
+  position: relative;
   flex: 1;
-  height: 5px;
-  background: var(--subtle);
-  border-radius: 999px;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px 12px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
-.fill {
-  height: 100%;
-  width: 0%;
-  background: var(--accent);
-  border-radius: 999px;
-  transition: width 0.35s ease;
-}
-.progress-text { margin: 0; font-size: 11px; color: var(--muted); flex: none; font-variant-numeric: tabular-nums; }
 
-.counts {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
-  margin: 12px 0 0;
+.welcome { text-align: center; padding: 20px 6px; margin: auto 0; }
+.welcome img { border-radius: 12px; }
+.welcome h2 {
+  margin: 13px 0 6px;
+  font-size: 14.5px;
+  font-weight: 620;
+  letter-spacing: -0.012em;
 }
-.counts > div {
-  background: var(--subtle);
-  border-radius: var(--radius);
-  padding: 7px 9px;
+.welcome p {
+  margin: 0 auto;
+  max-width: 32ch;
+  font-size: 12px;
+  color: var(--muted-foreground);
 }
-.counts dt { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
-.counts dd { margin: 1px 0 0; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
-.check { display: flex; gap: 8px; margin: 14px 0 0; cursor: pointer; }
-.check input { margin: 2px 0 0; accent-color: var(--accent); flex: none; }
-.check em { display: block; font-style: normal; font-size: 11px; color: var(--muted); }
+.suggestions { display: flex; flex-direction: column; gap: 6px; margin-top: 18px; }
+.suggestions button {
+  font-size: 12px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 8px 11px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.suggestions button:hover { background: var(--accent); border-color: var(--input); }
 
-.note {
-  margin: 14px 0 0;
-  padding-top: 12px;
+/* --- messages ----------------------------------------------------------- */
+
+.msg { display: flex; flex-direction: column; max-width: 100%; }
+.msg.user { align-items: flex-end; }
+
+.bubble {
+  padding: 8px 12px;
+  border-radius: 14px;
+  max-width: 88%;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+/* Maximum contrast, no hue: the user's own words are the one thing that is
+   never ambiguous, so they get the strongest treatment available. */
+.msg.user .bubble {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-bottom-right-radius: 5px;
+}
+.msg.bot .bubble {
+  background: var(--muted);
+  border-bottom-left-radius: 5px;
+  max-width: 100%;
+}
+.msg.bot.plain .bubble { background: transparent; padding: 0; }
+
+/* The English underneath a translated reply. Shown whenever it differs, so a
+   reader with some English can check the translation. */
+.original {
+  margin: 7px 0 0;
+  padding-top: 7px;
   border-top: 1px solid var(--border);
   font-size: 11.5px;
-  color: var(--muted);
+  font-style: italic;
+  color: var(--muted-foreground);
 }
 
-/* --- agent -------------------------------------------------------------- */
+/* --- the activity trace ------------------------------------------------- */
+/*
+ * Collapsed by default. An agent that acts invisibly cannot be supervised,
+ * but a wall of steps above every answer buries the answer -- so the summary
+ * line stays and the detail is one click away.
+ */
 
-.goal { position: relative; }
-.goal textarea { padding-right: 40px; resize: vertical; min-height: 56px; }
-
-.mic {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  padding: 0;
+.trace {
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--muted);
-  cursor: pointer;
-}
-.mic:hover { background: var(--subtle); color: var(--fg); }
-.mic.recording {
-  background: var(--danger);
-  border-color: var(--danger);
-  color: #fff;
-  animation: pulse 1.1s ease-in-out infinite;
-}
-
-.examples { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 9px; }
-.examples button {
-  font: inherit;
-  font-size: 11px;
-  color: var(--muted);
-  background: var(--subtle);
-  border: 1px solid transparent;
-  border-radius: 999px;
-  padding: 3px 9px;
-  cursor: pointer;
-}
-.examples button:hover { color: var(--fg); border-color: var(--border); }
-
-.agent-actions { display: flex; gap: 8px; margin-top: 10px; }
-.agent-actions .primary { flex: 1; }
-
-.answer {
-  margin-top: 14px;
-  padding: 11px 12px;
-  background: var(--accent-soft);
   border-radius: var(--radius);
+  background: color-mix(in oklch, var(--muted) 60%, transparent);
+  margin-bottom: 8px;
+  overflow: hidden;
 }
-.answer-text { margin: 0; font-size: 14px; line-height: 1.6; }
-.answer-en { margin: 7px 0 0; font-size: 11.5px; color: var(--muted); font-style: italic; }
+.trace > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 7px 11px;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.trace > summary::-webkit-details-marker { display: none; }
+.trace > summary::after {
+  content: "";
+  margin-left: auto;
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+  opacity: 0.7;
+}
+.trace[open] > summary::after { transform: rotate(45deg); }
+.trace > summary:hover { color: var(--foreground); }
 
-.log { list-style: none; margin: 14px 0 0; padding: 0; }
-.log li {
+.spinner {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  border: 1.5px solid color-mix(in oklch, var(--foreground) 22%, transparent);
+  border-top-color: var(--foreground);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.steps { list-style: none; margin: 0; padding: 0 11px 8px; }
+.steps li {
   display: grid;
-  grid-template-columns: 18px 1fr;
+  grid-template-columns: 15px 1fr;
   gap: 8px;
   padding: 7px 0;
   border-top: 1px solid var(--border);
 }
-.log li:first-child { border-top: 0; }
-.log .n {
+.steps .n {
   font-size: 10px;
-  font-weight: 600;
-  color: var(--muted);
+  color: var(--muted-foreground);
   text-align: right;
   padding-top: 2px;
   font-variant-numeric: tabular-nums;
 }
-.log .what { font-weight: 550; }
-.log .what code {
-  font: inherit;
-  font-weight: 600;
-  color: var(--accent);
+.steps .what { font-size: 12px; font-weight: 550; }
+.steps .what code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--accent);
 }
-.log .why { font-size: 11.5px; color: var(--muted); }
-.log .outcome { font-size: 11px; color: var(--muted); }
-.log li.thinking .what { color: var(--muted); font-weight: 400; }
-.log li.bad .outcome { color: var(--danger); }
+.steps .why { font-size: 11px; color: var(--muted-foreground); }
+.steps .outcome { font-size: 11px; color: var(--muted-foreground); }
+/* Red, and one of only three places colour appears: a step that failed is
+   exactly the thing you must not miss when skimming the trace. */
+.steps li.bad .outcome { color: var(--destructive); }
 
-/* --- errors and footer -------------------------------------------------- */
+/* --- confirmation ------------------------------------------------------- */
+/*
+ * The one place the agent stops and waits, and the only amber in the panel.
+ * It is the boundary between "browsing for you" and "spending your money".
+ */
+
+.confirm {
+  border: 1px solid color-mix(in oklch, var(--warning) 50%, var(--border));
+  background: color-mix(in oklch, var(--warning) 9%, transparent);
+  border-radius: var(--radius);
+  padding: 11px 12px;
+}
+.confirm p { margin: 0 0 10px; font-size: 12.5px; }
+.confirm .row { display: flex; gap: 7px; }
+.confirm button {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--background);
+}
+.confirm button:hover { background: var(--accent); }
+.confirm button.yes {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--primary-foreground);
+}
+.confirm button.yes:hover { opacity: 0.9; }
+.confirm button:disabled { opacity: 0.45; cursor: default; }
+
+/* --- translation progress ----------------------------------------------- */
+
+.progress-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 11px;
+}
+.progress-card .top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  margin-bottom: 8px;
+}
+.progress-card .top b { color: var(--foreground); font-weight: 600; font-variant-numeric: tabular-nums; }
+.bar { height: 4px; background: var(--muted); border-radius: 999px; overflow: hidden; }
+.fill {
+  height: 100%;
+  width: 0%;
+  background: var(--foreground);
+  border-radius: 999px;
+  transition: width 0.35s ease;
+}
+.counts {
+  display: flex;
+  gap: 10px;
+  margin-top: 9px;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+  flex-wrap: wrap;
+}
+.counts b { color: var(--foreground); font-weight: 600; }
+
+.undo {
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+.undo:hover { color: var(--foreground); background: var(--accent); }
+
+/* --- errors, composer, footer ------------------------------------------- */
 
 .error {
-  margin: 14px 0 0;
-  padding: 9px 11px;
-  font-size: 12px;
-  color: var(--danger);
-  background: var(--danger-soft);
-  border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent);
-  border-radius: var(--radius);
+  margin: 0 12px 8px;
+  padding: 8px 11px;
+  font-size: 11.5px;
+  color: var(--destructive);
+  background: color-mix(in oklch, var(--destructive) 9%, transparent);
+  border: 1px solid color-mix(in oklch, var(--destructive) 30%, transparent);
+  border-radius: 9px;
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
+  flex: none;
 }
 
-.footer { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border); }
-.privacy { margin: 0; font-size: 11px; color: var(--muted); }
-.privacy strong { color: var(--ok); font-weight: 600; }
-.footer-row { display: flex; gap: 6px; margin-top: 9px; flex-wrap: wrap; }
-.resident { margin: 8px 0 0; font-size: 10.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.composer {
+  position: relative;
+  flex: none;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--background);
+}
+
+.composer-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 6px 6px 6px 11px;
+  border: 1px solid var(--input);
+  border-radius: 14px;
+  transition: border-color 0.12s ease;
+}
+.composer-box:focus-within { border-color: var(--foreground); }
+
+#input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  resize: none;
+  max-height: 132px;
+  padding: 4px 0;
+  outline: none;
+}
+#input::placeholder { color: var(--muted-foreground); }
+
+.composer-actions { display: flex; align-items: center; gap: 5px; flex: none; }
+
+.mic.recording {
+  background: var(--destructive);
+  border-color: var(--destructive);
+  color: oklch(0.99 0 0);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+.send, .stop-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  cursor: pointer;
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+.send:hover, .stop-btn:hover { opacity: 0.88; }
+.send:disabled { opacity: 0.35; cursor: default; }
+
+.composer-foot {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 8px;
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  flex-wrap: wrap;
+}
+/* Green, the third and last colour: "this never left the machine" is a claim
+   the whole project rests on, so it is a state, not a footnote. */
+.privacy { color: var(--success); font-weight: 550; }
+.link-btn {
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.link-btn:hover { color: var(--foreground); }
 
 @media (prefers-reduced-motion: reduce) {
-  * { animation: none !important; transition: none !important; }
+  *, *::before { animation: none !important; transition: none !important; }
 }

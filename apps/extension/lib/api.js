@@ -108,6 +108,9 @@ export function createClient(base = DEFAULT_BASE) {
     /** One browsing action from one page snapshot. The loop is the caller's. */
     act: (payload) => request(base, "/agent/act", { method: "POST", body: payload }),
 
+    /** A long answer about the page, with no action considered. */
+    ask: (payload) => request(base, "/page/ask", { method: "POST", body: payload }),
+
     /** Speech in the user's own language -> text. Multipart, not JSON. */
     async transcribe(blob, language) {
       const form = new FormData();

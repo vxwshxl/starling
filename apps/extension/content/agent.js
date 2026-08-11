@@ -230,19 +230,33 @@
     setTimeout(() => ring.remove(), 1600);
   }
 
-  /** Set an input's value so a framework notices.
-   *
-   *  Assigning `element.value` directly is invisible to React: it tracks the
-   *  last value it wrote and, seeing no change through its own setter,
-   *  discards the input event and restores the old value on the next render.
-   *  Going through the prototype's setter is the standard way around it, and
-   *  without this every "type into the search box" step silently does
-   *  nothing on roughly half the web.
-   */
+  /** Set a field's value so a framework notices, or say why it cannot. */
   function setValue(element, value) {
-    const prototype = element instanceof HTMLTextAreaElement
-      ? HTMLTextAreaElement.prototype
-      : HTMLInputElement.prototype;
+    // Pick the prototype by what the element ACTUALLY is. The old version
+    // assumed anything that was not a <textarea> was an <input>, so when the
+    // model chose `type` on a button -- which Qwen2.5-3B does often -- the
+    // input setter was invoked on a button and threw "Illegal invocation",
+    // a message that says nothing about the real mistake. The service now
+    // rejects `type` on a non-typable role before it reaches here, and this
+    // stays as the second line of defence with an error worth reading.
+    let prototype = null;
+    if (element instanceof HTMLTextAreaElement) prototype = HTMLTextAreaElement.prototype;
+    else if (element instanceof HTMLInputElement) prototype = HTMLInputElement.prototype;
+    else if (element instanceof HTMLSelectElement) prototype = HTMLSelectElement.prototype;
+
+    if (!prototype) {
+      throw new Error(
+        `${element.tagName.toLowerCase()} is not a text field — it cannot be typed into. ` +
+        "Click it instead.",
+      );
+    }
+
+    // Assigning `element.value` directly is invisible to React: it tracks the
+    // last value it wrote and, seeing no change through its own setter,
+    // discards the input event and restores the old value on the next render.
+    // Going through the prototype's setter is the standard way around it, and
+    // without this every "type into the search box" step silently does
+    // nothing on roughly half the web.
     const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
     if (setter) setter.call(element, value);
     else element.value = value;

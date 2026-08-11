@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Starling — microphone access</title>
+    <link rel="stylesheet" href="sidepanel/panel.css" />
+    <style>
+      /* This page exists only to host a permission prompt, so it is centred
+         and narrow rather than laid out like the panel. */
+      body { display: block; overflow: auto; }
+      .wrap { max-width: 30rem; margin: 12vh auto; padding: 0 24px; text-align: center; }
+      .wrap img { border-radius: 12px; }
+      h1 { font-size: 19px; margin: 16px 0 8px; letter-spacing: -0.01em; }
+      p { color: var(--muted); font-size: 13.5px; margin: 0 0 14px; }
+      button {
+        font: inherit; font-weight: 600; font-size: 13px;
+        background: var(--primary); color: var(--primary-foreground);
+        border: 0; border-radius: 10px; padding: 10px 20px; cursor: pointer;
+      }
+      button:hover { opacity: 0.9; }
+      button:disabled { opacity: 0.45; cursor: default; }
+      .state { margin-top: 18px; font-size: 13px; }
+      .state.ok { color: var(--success); }
+      .state.bad { color: var(--destructive); }
+      ol {
+        text-align: left; color: var(--muted-foreground);
+        font-size: 12.5px; line-height: 1.7;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: var(--muted); padding: 1px 5px; border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <img src="icons/icon128.png" alt="" width="56" height="56" />
+      <h1>Let Starling hear you</h1>
+      <p>
+        Speech is recognised on this machine by Whisper and IndicConformer. No
+        audio is uploaded anywhere — it goes to 127.0.0.1:8000 and nowhere else.
+      </p>
+      <button id="grant" type="button">Allow the microphone</button>
+      <p class="state" id="state"></p>
+
+      <div id="manual" hidden>
+        <p>Chrome is refusing without asking. To grant it by hand:</p>
+        <ol>
+          <li>Open <code>chrome://settings/content/microphone</code></li>
+          <li>Under <b>Allowed to use your microphone</b>, press <b>Add</b></li>
+          <li>Paste this extension's address, shown below, and save</li>
+        </ol>
+        <p><code id="origin"></code></p>
+      </div>
+    </div>
+    <script src="permission.js"></script>
+  </body>
+</html>

@@ -151,7 +151,7 @@ def _fastapi_app() -> str:
     )
     for expected in (
         "/health", "/asr", "/tts", "/roundtrip",
-        "/translate", "/translate/batch", "/agent/act",
+        "/translate", "/translate/batch", "/agent/act", "/page/ask",
     ):
         assert expected in routes, f"missing route {expected}"
     return ", ".join(routes)
@@ -243,9 +243,77 @@ def _agent_contract() -> str:
     body = build_prompt_body(
         "book a ticket", url="https://x", title="X",
         elements=[{"ref": "e1", "role": "button", "name": "Search"}],
+        conversation=[{"role": "user", "text": "find me a cheap flight"}],
     )
     assert "e1" in body and "GOAL: book a ticket" in body
+    assert "cheap flight" in body, "conversation history is not reaching the prompt"
     return "parser handles fences and prose; 5 invalid actions refused"
+
+
+def _confirmation_gate() -> str:
+    """Actions that spend money must not execute without an explicit yes.
+
+    The model is instructed to `ask` first and mostly does. This is the
+    backstop for when it does not, and it is the one check here whose failure
+    costs the user real money rather than a bad translation.
+    """
+    from .agent import is_sensitive, validate
+
+    # Real button labels, including the ones that broke earlier versions.
+    # "Place your order" is here because the first implementation matched the
+    # plain substring "place order" and therefore sailed straight past
+    # Amazon's actual button -- the single case this gate exists for. The
+    # near-miss pairs matter as much: "Proceed to checkout" and "Post office"
+    # must NOT trip a gate that "Proceed to pay" and "Post comment" do.
+    must_confirm = [
+        "Place your order", "Place order", "Buy now", "Buy it now",
+        "Proceed to pay", "Pay now", "Confirm and pay", "Complete your purchase",
+        "Book now", "Subscribe", "Delete my account", "Permanently delete",
+        "Start your free trial", "Post comment", "Confirm your booking",
+    ]
+    must_not = [
+        "Add to cart", "Search", "Next page", "Sign in", "View details",
+        "Compare prices", "Read more", "Continue", "Proceed to checkout",
+        "Apply coupon", "Save for later", "Your orders", "Post office",
+    ]
+    for label in must_confirm:
+        assert is_sensitive(label), f"{label!r} should require confirmation"
+    for label in must_not:
+        assert not is_sensitive(label), f"{label!r} should NOT require confirmation"
+
+    # With names available, a sensitive click is flagged and carries the label
+    # the client re-checks after the user answers.
+    refs = {
+        "e1": {"name": "Place your order", "role": "button"},
+        "e2": {"name": "Add to cart", "role": "button"},
+        "e3": {"name": "Search", "role": "input:search"},
+    }
+
+    # `type` on a button is coerced to a click rather than refused -- see the
+    # note in validate(). The coercion must NOT bypass the money gate.
+    coerced = validate({"action": "type", "ref": "e1", "text": "Place your order"}, refs)
+    assert coerced.action == "click", "type on a button should become a click"
+    assert coerced.needs_confirmation, "a coerced click must still be gated"
+    assert coerced.warnings, "a coercion must be surfaced, not silent"
+    assert validate({"action": "type", "ref": "e3", "text": "shoes"}, refs).action == "type"
+    hot = validate({"action": "click", "ref": "e1"}, refs)
+    assert hot.needs_confirmation and hot.target_label == "Place your order", hot
+    assert hot.message_en, "a confirmation must explain what it is about to press"
+
+    cool = validate({"action": "click", "ref": "e2"}, refs)
+    assert not cool.needs_confirmation, "adding to a cart should not need a yes"
+    assert cool.target_label == "Add to cart"
+
+    # Terminal set: these hand control back to the user rather than looping.
+    for action, payload in (
+        ("ask", {"action": "ask", "message": "which size?"}),
+        ("done", {"action": "done", "message": "found it"}),
+        ("translate_page", {"action": "translate_page"}),
+    ):
+        assert validate(payload, refs).terminal, f"{action} should end the run"
+    assert not validate({"action": "click", "ref": "e2"}, refs).terminal
+
+    return f"{len(must_confirm)} gated, {len(must_not)} allowed through, terminal set correct"
 
 
 def _extension_manifest() -> str:
@@ -276,7 +344,7 @@ def _extension_manifest() -> str:
     # so the manifest does not name them and this has to.
     referenced += ["content/translate.js", "content/agent.js", "lib/api.js",
                    "lib/tabs.js", "lib/run.js", "sidepanel/panel.js",
-                   "sidepanel/panel.css"]
+                   "sidepanel/panel.css", "permission.html", "permission.js"]
     missing = [path for path in referenced if not (root / path).is_file()]
     assert not missing, f"manifest references missing files: {missing}"
 
@@ -305,6 +373,7 @@ def main() -> int:
     check("batch translation protocol", _batch_protocol)
     check("page translation filters", _page_filters)
     check("agent action contract", _agent_contract)
+    check("purchase confirmation gate", _confirmation_gate)
     check("chrome extension wiring", _extension_manifest)
 
     print()

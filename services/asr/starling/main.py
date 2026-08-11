@@ -254,6 +254,11 @@ class AgentRequest(BaseModel):
     """An extract of the page's visible prose, so the agent can answer a
     question outright instead of clicking around to find what it already has."""
 
+    conversation: list[dict[str, Any]] = Field(default_factory=list)
+    """Earlier turns of the chat, as {role, text}. The panel is a
+    conversation, so "now add it to the cart" has to resolve against what was
+    being discussed several turns ago."""
+
 
 @app.post("/translate")
 def translate_one(req: TranslateRequest) -> dict[str, Any]:
@@ -317,6 +322,35 @@ def clear_translation_cache() -> dict[str, Any]:
     return {"cleared": translation_cache.clear()}
 
 
+class PageQuestion(BaseModel):
+    question: str
+    text: str
+    url: str = ""
+    title: str = ""
+    language: str = "en"
+
+
+@app.post("/page/ask")
+def page_ask(req: PageQuestion) -> dict[str, Any]:
+    """Answer a question about the page, at length, without acting on it.
+
+    Separate from /agent/act because the two prompts pull against each other:
+    the action prompt is built to emit one JSON verb and is measurably bad at
+    emitting twelve sentences of prose. See PAGE_QA_PROMPT in agent.py.
+    """
+    try:
+        decision, timings = agent.answer_page(
+            req.question,
+            text=req.text,
+            url=req.url,
+            title=req.title,
+            language=req.language,
+        )
+        return {"result": decision.as_dict(), "timings": timings.as_dict()}
+    except Exception as exc:
+        raise _fail(exc) from exc
+
+
 @app.post("/agent/act")
 def agent_act(req: AgentRequest) -> dict[str, Any]:
     """Decide ONE browsing action from a page snapshot.
@@ -333,6 +367,7 @@ def agent_act(req: AgentRequest) -> dict[str, Any]:
             history=req.history,
             text=req.text,
             language=req.language,
+            conversation=req.conversation,
         )
         return {"result": decision.as_dict(), "timings": timings.as_dict()}
     except Exception as exc:
