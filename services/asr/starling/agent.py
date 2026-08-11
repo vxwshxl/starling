@@ -585,6 +585,28 @@ def validate(parsed: dict[str, Any], refs: Any) -> Decision:
             decision.target_label = str(entry or "")
             role = ""
 
+        # Typing a field's existing contents into it does nothing, and the
+        # model does it relentlessly. Measured on an Amazon results page,
+        # even with the products listed first and every "Add to cart" button
+        # named after its product, Qwen2.5-3B answered `type "shoe size 8
+        # formal" into e7` three times running -- into a search box already
+        # containing exactly that, on a page already showing the results.
+        #
+        # Prompting did not move it, so this is a fact about the page rather
+        # than a request: the action is a provable no-op, and the rejection
+        # says what to do instead. The retry in `_decide_en` then hands the
+        # model that sentence, which is the difference between a wasted step
+        # and a product being chosen.
+        if action == "type" and isinstance(entry, dict):
+            current = str(entry.get("value") or "").strip()
+            if current and current == str(args.get("text", "")).strip():
+                raise ValueError(
+                    f"{args['ref']} already contains exactly \"{current}\" -- typing "
+                    "it again would change nothing, and that search has already "
+                    "run. The results are in the element list; pick one of them, "
+                    "or scroll to see more."
+                )
+
         if action == "select" and role and role != "select":
             raise ValueError(
                 f"{args['ref']} is a {role}, not a dropdown. Use click instead."
@@ -697,8 +719,37 @@ def _decide_en(body: str, refs: set[str]) -> Decision:
             last_error = str(exc)
             logger.warning("agent reply rejected (attempt %d): %s", attempt + 1, exc)
 
-    # Both attempts failed. This is a real outcome, not an exception: the loop
-    # should stop and tell the user, the same as any other terminal step.
+    # Both attempts failed. Rather than a dead end, turn it into a question --
+    # measured, the commonest way to get here is a goal that requires CHOOSING
+    # ("buy me a formal shoe under 1000", "add the cheapest one"), which
+    # Qwen2.5-3B cannot do reliably even with the products listed first and
+    # priced in the page text. It CAN act on a named target: "add the Centrino
+    # to the cart" works first time. So list what is on offer and let the user
+    # name one, which lands squarely on the path that does work.
+    options = [
+        entry["name"]
+        for entry in (refs.values() if isinstance(refs, dict) else [])
+        if isinstance(entry, dict)
+        and entry.get("name")
+        and entry.get("role") in ("link", "button")
+        and len(entry["name"]) > 12
+    ][:5]
+    if options:
+        listed = "; ".join(options)
+        return Decision(
+            action="ask",
+            why="could not choose between the options on the page",
+            message_en=(
+                "I could not decide which one you meant. Here is what I can see: "
+                f"{listed}. Which should I use?"
+            ),
+            message=(
+                "I could not decide which one you meant. Here is what I can see: "
+                f"{listed}. Which should I use?"
+            ),
+            warnings=[f"Two invalid replies from the model. Last error: {last_error}"],
+        )
+
     return Decision(
         action="fail",
         why="the model did not produce a usable action",
@@ -1015,6 +1066,12 @@ def decide(
         str(el["ref"]): {
             "name": str(el.get("name") or ""),
             "role": str(el.get("role") or el.get("tag") or ""),
+            # `value` and `placeholder` are not decoration here: the first
+            # drives the no-op-typing guard, the second helps the secret-field
+            # detector spot a box labelled only by its placeholder. Leaving
+            # them out is what made the no-op guard silently never fire.
+            "value": str(el.get("value") or ""),
+            "placeholder": str(el.get("placeholder") or ""),
         }
         for el in elements
         if el.get("ref")

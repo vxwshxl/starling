@@ -232,7 +232,15 @@ function addSpeakButton(container, text, language) {
     }, 1000);
 
     try {
-      const { result } = await client.speak(text, language);
+      // OmniVoice on Modal, not OmniVoice on this CPU. Same model, rented
+      // GPU. Local synthesis measured 31-37 s for one answer on the Modal
+      // dashboard's own timings, and answers are now 6-12 sentences, so the
+      // local path is minutes and unusable from a side panel.
+      //
+      // The trade is real and is not hidden: Modal does not clone the
+      // speaker's voice, and the text leaves the machine. The service returns
+      // both caveats in `warnings` and they are printed next to the button.
+      const { result } = await client.speak(text, language, { backend: "modal" });
       audio = new Audio(client.audioUrl(result.audio_path));
       audio.addEventListener("ended", () => reset("Listen again"));
       await audio.play();

@@ -326,6 +326,31 @@ def clear_translation_cache() -> dict[str, Any]:
     return {"cleared": translation_cache.clear()}
 
 
+class RouteRequest(BaseModel):
+    text: str
+    url: str = ""
+    title: str = ""
+    language: str = "en"
+
+
+@app.post("/route")
+def route_request(req: RouteRequest) -> dict[str, Any]:
+    """Answer, act, or translate -- and on which site.
+
+    One cheap model call that replaces guessing. A domain regex cannot tell
+    that "size is 7 from flipkart under 1000" means open flipkart.com, and a
+    lookup table of brand names only ever covers the brands somebody thought
+    of. See ROUTER_PROMPT in agent.py.
+    """
+    try:
+        result, timings = agent.route(
+            req.text, url=req.url, title=req.title, language=req.language
+        )
+        return {"result": result.as_dict(), "timings": timings.as_dict()}
+    except Exception as exc:
+        raise _fail(exc) from exc
+
+
 class PageQuestion(BaseModel):
     question: str
     text: str

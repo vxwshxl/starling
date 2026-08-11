@@ -198,7 +198,13 @@ export function createClient(base = DEFAULT_BASE) {
       return response.json();
     },
 
-    audioUrl: (name) => `${base}/audio/${name}`,
+    /** Playable URL for a synthesis result.
+     *
+     *  `audio_path` comes back as a full filesystem path, while GET /audio
+     *  takes a bare filename and joins it to the temp directory itself. Left
+     *  unstripped this produced /audio//var/folders/.../x.wav, a 404 that
+     *  surfaced only as silence. */
+    audioUrl: (path) => `${base}/audio/${String(path).split("/").pop()}`,
 
     /** Speech in the user's own language -> text. Multipart, not JSON. */
     async transcribe(blob, language) {
