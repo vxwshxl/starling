@@ -148,8 +148,13 @@ Stated here rather than discovered on stage.
   transformers 5 removed slow tokenizers; IndicTrans2 needs one. Speech works
   end to end in all six languages, but answers come back in English. The fix
   is running IndicTrans2 in an isolated environment as a subprocess.
-- **Synthesis is slow** — roughly 46× realtime on CPU. Speech is therefore an
-  explicit button, never automatic.
+- **Synthesis is slow** — measured at ~5.5× realtime on CPU (17 s of compute
+  for 3.2 s of speech), and considerably worse when the machine is already
+  under memory pressure. Speech is therefore an explicit button, never
+  automatic.
+- **Always pass a reference transcript to `/tts`.** Omit it and OmniVoice
+  quietly loads a second Whisper of its own just to transcribe the reference,
+  which looks exactly like a hang. Round trip supplies it for you.
 - **`STARLING_DEVICE=cpu` is required** for synthesis and is baked into the
   scripts. On `mps`, OmniVoice segfaults in fp16 and emits near-silence in
   fp32 — the second being far more dangerous, since it fails without an error.

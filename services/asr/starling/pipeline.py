@@ -142,6 +142,18 @@ def synthesize(
     if not text.strip():
         raise ValueError("Cannot synthesise empty text.")
 
+    if reference_audio is not None and not (reference_text or "").strip():
+        # Refuse rather than let OmniVoice quietly load a second Whisper to
+        # transcribe the reference for us. That costs gigabytes we do not have
+        # and presents as a twenty-minute hang with no error -- which is
+        # exactly how it was found. Callers always know what the speaker said:
+        # roundtrip() has just transcribed it, and the lab has a field for it.
+        raise ValueError(
+            "reference_audio requires reference_text. Without it OmniVoice "
+            "loads its own Whisper to transcribe the reference, which stalls "
+            "for a long time and consumes several GB."
+        )
+
     ref_wav: Path | None = None
     if reference_audio is not None:
         with timings.stage("ref_normalize"):

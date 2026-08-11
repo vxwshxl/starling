@@ -283,7 +283,7 @@ export function HealthTiles() {
         busy={busy === "asr"}
         error={errors.asr ?? null}
         onToggle={toggle}
-        hint="Turns the speaker's audio into text. Swapped for an Indic model in phase 2."
+        hint="Turns speech into text. Whisper for Assamese and Sylheti, IndicConformer for the rest."
         state={state}
         model={state.phase === "up" ? state.health.models.asr.model : undefined}
         loaded={state.phase === "up" && state.health.models.asr.loaded}

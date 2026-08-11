@@ -50,9 +50,10 @@ export default function StatusPage() {
         </main>
 
         <footer className="tile-rise mt-8 text-xs text-muted-foreground [animation-delay:360ms]">
-          Phase 1 — ASR and TTS only, joined end to end so the assistant repeats
-          you back in your cloned voice. Translation, retrieval and the LLM slot
-          in at the <code className="font-mono">PHASE 2 SEAM</code>.
+          Six languages, recognised and spoken natively. Answers are retrieved
+          from a fixed offline knowledge base and phrased by a local model —
+          nothing leaves this machine. Translation between languages is the
+          remaining gap.
         </footer>
       </div>
     </div>
