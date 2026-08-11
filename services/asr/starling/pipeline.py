@@ -27,6 +27,7 @@ import soundfile as sf
 
 from . import languages, models
 from .audio import probe_duration, to_wav_16k
+from .config import settings
 from .timing import Timings
 
 logger = logging.getLogger("starling.pipeline")
@@ -125,7 +126,7 @@ def synthesize(
     reference_audio: str | Path | None = None,
     reference_text: str | None = None,
     timings: Timings | None = None,
-    num_step: int = 32,
+    num_step: int | None = None,
     guidance_scale: float = 2.0,
     speed: float = 1.0,
 ) -> tuple[SynthesisResult, Timings]:
@@ -138,6 +139,9 @@ def synthesize(
     timings = timings or Timings()
     lang = languages.get(language_code)
     tts_code = languages.tts_code_for(language_code)
+    # None means "whatever the deployment is tuned to", which is the setting
+    # that decides whether this call takes 17 seconds or 138. See config.py.
+    num_step = settings.tts_num_step if num_step is None else num_step
 
     if not text.strip():
         raise ValueError("Cannot synthesise empty text.")

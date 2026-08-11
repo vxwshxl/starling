@@ -39,7 +39,7 @@ export type Health = {
 /** One entry of Health.models.asr.resident. */
 export type ResidentModel = { backend: string; model: string };
 
-export type ModelTarget = "asr" | "tts";
+export type ModelTarget = "asr" | "tts" | "llm" | "translate" | "all";
 
 async function post<T>(path: string, body?: FormData): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -69,7 +69,7 @@ export function loadModel(target: ModelTarget, language: string) {
   return post<{ models: Health["models"] }>(`/models/${target}/load`, form);
 }
 
-export function unloadModel(target: ModelTarget | "all") {
+export function unloadModel(target: ModelTarget) {
   return post<{ freed: Record<string, boolean>; models: Health["models"] }>(
     `/models/${target}/unload`,
   );
@@ -84,14 +84,21 @@ export type Source = {
 };
 
 /**
- * Why the reply says what it says. `grounded` cannot carry this on its own:
- * a refusal and a greeting are both ungrounded, and only one of them should
- * be labelled "not covered by the knowledge base".
+ * Where the reply came from. `grounded` cannot carry this on its own: a
+ * greeting and a general-knowledge answer are both ungrounded, and only one of
+ * them needs a "nothing behind this" caveat.
+ *
+ *   answer      built from retrieved passages, carries `sources`
+ *   general     the model's own knowledge, nothing behind it
+ *   small_talk  fixed text, no model involved
  */
-export type ChatKind = "answer" | "refusal" | "small_talk";
+export type ChatKind = "answer" | "general" | "small_talk";
 
 export type ChatResult = {
+  /** The answer in the language it was asked in. This is what gets spoken. */
   text: string;
+  /** The same answer before the return translation, for checking against. */
+  text_en: string;
   /** False when the text did not come from retrieved passages. */
   grounded: boolean;
   kind: ChatKind;

@@ -16,7 +16,7 @@ import logging
 import threading
 from typing import Any
 
-from . import languages
+from . import languages, llm, translate
 from .asr_backends import ASRBackend, build_backend
 from .config import settings
 
@@ -133,6 +133,15 @@ def status() -> dict[str, Any]:
             "model": settings.tts_model,
             "loaded": _tts is not None,
             "sample_rate": tts_sample_rate(),
+            "num_step": settings.tts_num_step,
+        },
+        # These two live in their own modules because they are pure mlx-lm and
+        # share none of the loader machinery above. They are reported here so
+        # /health has one honest answer to "what is holding memory".
+        "llm": {"model": settings.llm_model, "loaded": llm.loaded()},
+        "translate": {
+            "model": settings.translate_model,
+            "loaded": translate.loaded(),
         },
         "device": settings.device,
     }
@@ -148,8 +157,21 @@ def load(target: str, language_code: str | None = None) -> dict[str, Any]:
         get_asr(language_code)
     elif target == "tts":
         get_tts()
+    elif target == "llm":
+        llm.load()
+    elif target == "translate":
+        translate.load()
+    elif target == "all":
+        # The order the pipeline needs them in, so a "Start" button warms the
+        # cheap end first and the user sees progress rather than one long wait.
+        get_asr(language_code)
+        llm.load()
+        translate.load()
+        get_tts()
     else:
-        raise ValueError(f"Unknown target {target!r}. Use 'asr' or 'tts'.")
+        raise ValueError(
+            f"Unknown target {target!r}. Use 'asr', 'tts', 'llm', 'translate' or 'all'."
+        )
     return status()
 
 
@@ -161,10 +183,12 @@ def unload(target: str = "all") -> dict[str, bool]:
     """
     global _asr, _tts
 
-    if target not in ("asr", "tts", "all"):
-        raise ValueError(f"Unknown target {target!r}. Use 'asr', 'tts' or 'all'.")
+    if target not in ("asr", "tts", "llm", "translate", "all"):
+        raise ValueError(
+            f"Unknown target {target!r}. Use 'asr', 'tts', 'llm', 'translate' or 'all'."
+        )
 
-    freed = {"asr": False, "tts": False}
+    freed = {"asr": False, "tts": False, "llm": False, "translate": False}
 
     if target in ("asr", "all"):
         for backend in _asr.values():
@@ -177,6 +201,12 @@ def unload(target: str = "all") -> dict[str, bool]:
         del _tts
         _tts = None
         freed["tts"] = True
+
+    if target in ("llm", "all"):
+        freed["llm"] = llm.unload()
+
+    if target in ("translate", "all"):
+        freed["translate"] = translate.unload()
 
     gc.collect()
     try:

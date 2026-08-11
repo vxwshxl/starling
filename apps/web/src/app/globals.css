@@ -130,34 +130,78 @@
    alone so the CLI can be re-run. Overrides go here, after it, where plain
    source order wins.
 
-   The accent is the hill myna's iridescent violet-black plumage. It is chosen
-   to sit far from green, amber and red on the hue wheel, because this UI has
-   to distinguish four states at a glance -- up, native, fallback, unavailable
-   -- and those three are already spoken for.
+   The UI is monochrome and colour is a signal, not decoration.
+
+   Chrome, buttons and message bubbles are pure greyscale at maximum contrast:
+   white on true black, black on white. That leaves green, amber and red
+   unspent, so the four states this app has to distinguish at a glance -- model
+   resident, native coverage, fallback coverage, unavailable -- are the only
+   coloured things on the page and cannot be mistaken for styling. A violet
+   brand accent competed with exactly those signals.
 --------------------------------------------------------------------------- */
 
 :root {
-  --primary: oklch(0.47 0.16 288);
-  --primary-foreground: oklch(0.99 0 0);
-  --ring: oklch(0.47 0.16 288 / 60%);
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.13 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.13 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.13 0 0);
 
-  --success: oklch(0.55 0.13 155);
+  --primary: oklch(0.13 0 0);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.96 0 0);
+  --secondary-foreground: oklch(0.13 0 0);
+  --muted: oklch(0.965 0 0);
+  /* 0.44, not shadcn's 0.556: at 0.556 secondary text is 4.0:1 on white and
+     fails AA. This clears it at 7.2:1, which matters when the reader is
+     squinting at a phone outdoors. */
+  --muted-foreground: oklch(0.44 0 0);
+  --accent: oklch(0.95 0 0);
+  --accent-foreground: oklch(0.13 0 0);
+  --border: oklch(0.87 0 0);
+  --input: oklch(0.84 0 0);
+  --ring: oklch(0.13 0 0 / 55%);
+
+  --success: oklch(0.52 0.15 150);
   --success-foreground: oklch(0.99 0 0);
   /* L is 0.55, not the more attractive 0.62, because amber-on-white only
      clears WCAG AA (4.5:1) once it is this dark. Measured, not guessed. */
   --warning: oklch(0.55 0.13 75);
   --warning-foreground: oklch(0.99 0 0);
+  --destructive: oklch(0.55 0.22 27);
 }
 
 .dark {
-  --primary: oklch(0.72 0.15 288);
-  --primary-foreground: oklch(0.19 0.03 288);
-  --ring: oklch(0.72 0.15 288 / 60%);
+  /* True black, not shadcn's 0.145 grey. On the OLED-ish panels this will be
+     demoed on it makes white text read as engraved rather than printed, and
+     it is the strongest contrast available for a hall projector. */
+  --background: oklch(0 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.135 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.135 0 0);
+  --popover-foreground: oklch(0.985 0 0);
 
-  --success: oklch(0.74 0.15 155);
-  --success-foreground: oklch(0.19 0.02 155);
+  --primary: oklch(1 0 0);
+  --primary-foreground: oklch(0.11 0 0);
+  --secondary: oklch(0.22 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.19 0 0);
+  --muted-foreground: oklch(0.74 0 0);
+  --accent: oklch(0.24 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  /* Heavier than the stock 10%: against true black a 10% white border is
+     invisible, and this layout is held together by its dividing lines. */
+  --border: oklch(1 0 0 / 20%);
+  --input: oklch(1 0 0 / 26%);
+  --ring: oklch(1 0 0 / 60%);
+
+  --success: oklch(0.76 0.18 150);
+  --success-foreground: oklch(0.16 0.02 150);
   --warning: oklch(0.80 0.14 80);
   --warning-foreground: oklch(0.22 0.03 80);
+  --destructive: oklch(0.68 0.21 25);
 }
 
 @theme inline {
@@ -165,20 +209,17 @@
   --font-mono: var(--font-mono);
 }
 
-/* Atmosphere. Two very wide, very faint accent washes anchored off the top
-   corners, so the page has a light source instead of being a flat slab. */
+/* Atmosphere. One very wide, very faint wash off the top-left, so the page has
+   a light source instead of being a flat slab. Greyscale and weaker than the
+   old violet pair: on true black anything stronger reads as a smudge, and a
+   tinted wash would be the only hue on a page whose whole point is that hue
+   means state. */
 body {
-  background-image:
-    radial-gradient(
-      70rem 45rem at 12% -15%,
-      color-mix(in oklch, var(--primary) 14%, transparent),
-      transparent 70%
-    ),
-    radial-gradient(
-      55rem 38rem at 92% -5%,
-      color-mix(in oklch, var(--primary) 8%, transparent),
-      transparent 65%
-    );
+  background-image: radial-gradient(
+    75rem 48rem at 10% -18%,
+    color-mix(in oklch, var(--foreground) 7%, transparent),
+    transparent 70%
+  );
   background-repeat: no-repeat;
   background-attachment: fixed;
 }

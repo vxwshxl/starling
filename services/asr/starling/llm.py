@@ -42,6 +42,27 @@ Rules:
 - Do not mention "passages", "context" or "documents". Just answer.
 - Answer in English. Translation happens elsewhere in the pipeline."""
 
+#: Used when retrieval found nothing and we answer from the model's own
+#: knowledge instead of refusing.
+#:
+#: The safety rules are NOT relaxed here -- they are the reason this prompt is
+#: separate rather than the grounded one with the passages removed. An
+#: ungrounded model asked a medical question is exactly the situation that
+#: produces a confident dosage, so "never name a medicine or a dose" and
+#: "urgent means go to a health centre" are repeated verbatim and the model is
+#: told to say when it is unsure. What it may now do, which it could not
+#: before, is answer an ordinary question that simply is not in a twenty-
+#: passage corpus.
+GENERAL_PROMPT = """You are Starling, a helpful assistant used by people in Northeast India. This question is not covered by your knowledge base, so answer it from your own general knowledge.
+
+Rules:
+- Be accurate. If you are not sure, say so plainly rather than guessing.
+- Never diagnose anyone, and never name a specific medicine, dose or treatment. Describe what a condition is in general terms and say who to see about it.
+- For anything urgent, worsening, or involving a baby, say plainly that they should go to a health centre or call an ASHA worker.
+- Never give legal, financial or official guarantees about government schemes. Point to the gram panchayat, block office or official helpline instead.
+- Reply in 2-4 short sentences of plain language. It will be read aloud to someone who may not read.
+- Answer in English. Translation happens elsewhere in the pipeline."""
+
 
 def loaded() -> bool:
     return _model is not None
@@ -85,11 +106,9 @@ def unload() -> bool:
     return True
 
 
-def _build_prompt(tokenizer: Any, question: str, passages: list[str]) -> str:
-    reference = "\n\n".join(f"[{i + 1}] {p}" for i, p in enumerate(passages))
-    user = f"Reference passages:\n{reference}\n\nQuestion: {question}"
+def _chat(tokenizer: Any, system: str, user: str) -> str:
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
     # Qwen ships a chat template; using it rather than hand-rolling the special
@@ -97,6 +116,22 @@ def _build_prompt(tokenizer: Any, question: str, passages: list[str]) -> str:
     return tokenizer.apply_chat_template(
         messages, add_generation_prompt=True, tokenize=False
     )
+
+
+def _generate(prompt: str, model: Any, tokenizer: Any, max_tokens: int) -> str:
+    from mlx_lm import generate as mlx_generate
+    from mlx_lm.sample_utils import make_sampler
+
+    # Near-greedy: this is meant to restate given facts, not to be creative.
+    text = mlx_generate(
+        model,
+        tokenizer,
+        prompt=prompt,
+        max_tokens=max_tokens,
+        sampler=make_sampler(temp=0.3, top_p=0.9),
+        verbose=False,
+    )
+    return text.strip()
 
 
 def answer(question: str, passages: list[str], max_tokens: int = 220) -> str:
@@ -107,23 +142,27 @@ def answer(question: str, passages: list[str], max_tokens: int = 220) -> str:
     """
     if not passages:
         raise ValueError(
-            "answer() requires retrieved passages; refuse the question instead "
-            "of generating without grounding"
+            "answer() requires retrieved passages; call answer_general() if an "
+            "ungrounded answer is genuinely wanted, so the caller has to say so"
         )
 
-    from mlx_lm import generate as mlx_generate
-    from mlx_lm.sample_utils import make_sampler
-
     model, tokenizer = load()
-    prompt = _build_prompt(tokenizer, question, passages)
-    # Near-greedy: this is meant to restate given facts, not to be creative.
-    sampler = make_sampler(temp=0.3, top_p=0.9)
-    text = mlx_generate(
-        model,
+    reference = "\n\n".join(f"[{i + 1}] {p}" for i, p in enumerate(passages))
+    prompt = _chat(
         tokenizer,
-        prompt=prompt,
-        max_tokens=max_tokens,
-        sampler=sampler,
-        verbose=False,
+        SYSTEM_PROMPT,
+        f"Reference passages:\n{reference}\n\nQuestion: {question}",
     )
-    return text.strip()
+    return _generate(prompt, model, tokenizer, max_tokens)
+
+
+def answer_general(question: str, max_tokens: int = 220) -> str:
+    """Answer from the model's own knowledge, with no retrieved grounding.
+
+    Separate from `answer()` on purpose. The caller has to choose this
+    explicitly, and whatever it returns must be labelled as ungrounded in the
+    UI -- a sourced health answer and an invented one must never look alike.
+    """
+    model, tokenizer = load()
+    prompt = _chat(tokenizer, GENERAL_PROMPT, question)
+    return _generate(prompt, model, tokenizer, max_tokens)

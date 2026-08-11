@@ -38,10 +38,27 @@ class Settings:
     # Runs through MLX on the GPU. Small on purpose: it only has to rephrase
     # retrieved passages, and it shares 16 GB with the speech models.
     llm_model: str = _env("STARLING_LLM_MODEL", "mlx-community/Qwen2.5-3B-Instruct-4bit")
+    # Sarvam-Translate, a Gemma-3-4B fine-tune covering all 22 scheduled
+    # Indian languages -- the only model here that can write Bodo, Manipuri or
+    # Santali. ~2.6 GB in 4-bit. See translate.py for why not IndicTrans2.
+    translate_model: str = _env(
+        "STARLING_TRANSLATE_MODEL", "mlx-community/sarvam-translate-mlx-4bit"
+    )
 
     host: str = _env("STARLING_HOST", "127.0.0.1")
     port: int = _env_int("STARLING_PORT", 8000)
     lab_port: int = _env_int("STARLING_LAB_PORT", 7860)
+
+    # OmniVoice denoising steps. Cost is linear in this and the audio is real
+    # at every setting -- measured on this machine, one 5.7 s utterance:
+    #   32 steps  138.6 s  (rtf 25.9)   <- the old default, unusable live
+    #   16 steps   68.0 s  (rtf 11.7)
+    #    8 steps   34.3 s  (rtf  6.1)   <- default
+    #    4 steps   17.1 s  (rtf  3.0)
+    # Peak stayed 0.500 throughout, so none of these is the silent-output
+    # failure mode from the MPS notes. Drop to 4 if the demo needs the speed
+    # more than the fidelity; judge that by ear, not by RMS.
+    tts_num_step: int = _env_int("STARLING_TTS_STEPS", 8)
 
     # Every model sees 16 kHz mono. OmniVoice hands back 24 kHz.
     # These are invariants, not tunables -- they live here to be imported,

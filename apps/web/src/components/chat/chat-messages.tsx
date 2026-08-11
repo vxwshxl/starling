@@ -5,12 +5,15 @@ import {
   AlertTriangle,
   Bird,
   BookOpen,
+  BrainCircuit,
   CircleAlert,
+  Languages,
   Loader2,
   Mic,
   Volume2,
 } from "lucide-react";
 
+import { AudioPlayer } from "@/components/chat/audio-player";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -75,12 +78,10 @@ function Sources({ sources }: { sources: NonNullable<Message["sources"]> }) {
 function Bubble({
   message,
   onSpeak,
-  onPickSuggestion,
   showWarnings,
 }: {
   message: Message;
   onSpeak: (id: string, text: string) => void;
-  onPickSuggestion: (q: string) => void;
   /** Warnings already shown earlier in the thread are suppressed here. */
   showWarnings: string[];
 }) {
@@ -126,29 +127,37 @@ function Bubble({
               {message.text}
             </p>
 
-            {/* A greeting is ungrounded too, and labelling it "not covered"
-                would be both true and absurd. Only a refusal gets the note. */}
-            {message.kind === "refusal" && (
-              <div className="space-y-2 rounded-lg border border-border bg-muted/40 p-3">
-                <p className="text-xs text-muted-foreground">
-                  Not covered by the knowledge base — answered with a fixed
-                  response rather than a guess. Try one of these:
-                </p>
-                <div className="flex flex-wrap gap-1.5">
-                  {SUGGESTIONS.map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => onPickSuggestion(s)}
-                      className="rounded-full border border-border px-2.5 py-1 text-xs transition-colors hover:bg-muted"
-                    >
-                      {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
+            {/* A greeting is ungrounded too, and labelling it would be absurd.
+                Only a general-knowledge answer gets the caveat, because that
+                is the one with nothing behind it. */}
+            {message.kind === "general" && (
+              <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                <BrainCircuit className="mt-px size-3.5 shrink-0" aria-hidden />
+                <span>
+                  Not in the knowledge base — answered from the model&apos;s own
+                  knowledge, with no source behind it. Check anything that
+                  matters with a health worker or your gram panchayat.
+                </span>
+              </p>
             )}
 
             {message.sources && <Sources sources={message.sources} />}
+
+            {/* The English the model actually reasoned in. Collapsed, because
+                the point of the product is that you never need it -- but when
+                a translated answer looks wrong, this is the only way to tell a
+                bad answer from a bad translation. */}
+            {message.textEn && message.textEn !== message.text && (
+              <details className="group/en">
+                <summary className="inline-flex cursor-pointer items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+                  <Languages className="size-3.5" aria-hidden />
+                  Show the English it was written in
+                </summary>
+                <p className="mt-1.5 border-l-2 border-border pl-2.5 text-xs leading-relaxed text-muted-foreground">
+                  {message.textEn}
+                </p>
+              </details>
+            )}
 
             {showWarnings.map((w) => (
               <Alert key={w} variant="warning">
@@ -171,6 +180,14 @@ function Bubble({
                 )}
                 {message.speaking ? "Synthesising…" : "Speak"}
               </Button>
+              {/* Voice cloning runs on CPU at roughly 6x real time, so a
+                  three-sentence answer is half a minute of silence. Saying so
+                  is the difference between waiting and reloading the page. */}
+              {message.speaking && (
+                <span className="text-xs text-muted-foreground">
+                  about 30 s — OmniVoice runs on the CPU
+                </span>
+              )}
               {/* A refusal costs a fraction of a millisecond, and "0 ms" next
                   to an answer reads as a stopwatch that failed rather than as
                   work that never happened. */}
@@ -183,8 +200,7 @@ function Bubble({
             </div>
 
             {message.audioUrl && (
-              // eslint-disable-next-line jsx-a11y/media-has-caption -- synthesised speech of the text shown directly above
-              <audio controls src={message.audioUrl} className="mt-1 w-full max-w-sm" />
+              <AudioPlayer src={message.audioUrl} className="mt-1" />
             )}
           </>
         )}
@@ -223,13 +239,7 @@ export function ChatMessages({
         const fresh = (m.warnings ?? []).filter((w) => !seen.has(w));
         fresh.forEach((w) => seen.add(w));
         return (
-          <Bubble
-            key={m.id}
-            message={m}
-            onSpeak={onSpeak}
-            onPickSuggestion={onPickSuggestion}
-            showWarnings={fresh}
-          />
+          <Bubble key={m.id} message={m} onSpeak={onSpeak} showWarnings={fresh} />
         );
       })}
       <div ref={endRef} />

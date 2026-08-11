@@ -18,10 +18,13 @@ export type Message = {
   text: string;
   /** True while the assistant reply is still being generated. */
   pending?: boolean;
+  /** The answer before the return translation, shown on demand. Absent when
+   *  the conversation was already in English. */
+  textEn?: string;
   sources?: Source[];
   /** False when the text did not come from retrieved passages. */
   grounded?: boolean;
-  /** Distinguishes a refusal from a greeting; both are ungrounded. */
+  /** Where the answer came from; see ChatKind. */
   kind?: ChatKind;
   warnings?: string[];
   timings?: Timings;
@@ -81,6 +84,7 @@ export function useChat(language: string) {
         );
         patch(replyId, {
           text: result.text,
+          textEn: result.text_en,
           pending: false,
           sources: result.sources,
           grounded: result.grounded,

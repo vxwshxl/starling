@@ -122,10 +122,32 @@ class _Index:
 _index = _Index(PASSAGES)
 
 
-def search(query: str, limit: int = 3, min_score: float = 1.0) -> list[Hit]:
+#: Below this, the best hit is coincidence rather than coverage.
+#:
+#: Measured over the corpus rather than picked. Top-hit scores, on-topic
+#: against off-topic:
+#:
+#:     4.53  my child has fever              <- lowest genuine hit
+#:     5.05  is school free for my daughter
+#:     8.38  snake bite
+#:    12.46  how do I make drinking water safe
+#:     ----
+#:     2.58  how far is the sun              <- highest false hit
+#:     1.83  who first went to the moon
+#:     0.00  what is anesthesia
+#:
+#: 1.0, the old value, let "who first went to the moon" retrieve Mid-day
+#: meals, Grievances and Pensions, and the answer came back citing all three.
+#: 3.5 sits in the gap with margin on both sides. Anything under it now falls
+#: through to the general-knowledge path, which is the honest place for it.
+MIN_SCORE = 3.5
+
+
+def search(query: str, limit: int = 3, min_score: float = MIN_SCORE) -> list[Hit]:
     """Best passages for a query, empty when nothing matches well enough.
 
-    An empty result is a real answer -- it means the knowledge base does not
-    cover this -- and callers must not treat it as a reason to answer anyway.
+    An empty result is a real answer -- the knowledge base does not cover this
+    -- and chat.py routes it to an explicitly ungrounded answer rather than
+    letting a coincidental match masquerade as a source.
     """
     return _index.search(query, limit=limit, min_score=min_score)

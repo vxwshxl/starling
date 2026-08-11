@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Menu, Play, Power, Square } from "lucide-react";
 
 import { ChatComposer } from "@/components/chat/chat-composer";
@@ -73,20 +73,25 @@ export function ChatShell() {
 
   // Read after mount, never during render: localStorage does not exist on the
   // server, and seeding state from it would hydrate against empty HTML.
-  const hydrated = useRef(false);
+  const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     setThreads(readThreads());
-    hydrated.current = true;
+    setHydrated(true);
   }, []);
 
+  // Gated on hydrated STATE, not a ref. With a ref the guard is already true
+  // by the time this effect runs on the mount commit -- effects fire in
+  // declaration order, so the read above sets it -- and `threads` is still the
+  // initial []. That wrote an empty array straight over the saved history on
+  // every single page load, before the restored value had a chance to render.
   useEffect(() => {
-    if (!hydrated.current) return;
+    if (!hydrated) return;
     try {
       localStorage.setItem(THREADS_KEY, JSON.stringify(threads));
     } catch {
       /* private mode or quota; history is a convenience, not a requirement */
     }
-  }, [threads]);
+  }, [threads, hydrated]);
 
   // The live conversation is the one in useChat; the thread record is a
   // mirror of it. Keeping the mirror here, rather than making useChat write
@@ -163,7 +168,10 @@ export function ChatShell() {
       if (modelsReady) {
         await unloadModel("all");
       } else {
-        await loadModel("asr", language);
+        // Everything, not just ASR. The answer path now needs the recogniser,
+        // the answering model AND the translator, so warming one of the three
+        // still left two multi-second loads inside the first question.
+        await loadModel("all", language);
       }
     } catch {
       /* surfaced by the status page; the header stays quiet */
@@ -242,33 +250,44 @@ export function ChatShell() {
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
-                variant={modelsReady ? "outline" : "default"}
+                variant="outline"
                 size="sm"
                 onClick={toggleModels}
                 disabled={starting || health.state.phase !== "up"}
+                // The page is monochrome so that exactly these signals can be
+                // coloured. Green means the models are up and this stops them;
+                // red means they are down and this starts them.
+                className={cn(
+                  "border-2 font-medium",
+                  starting
+                    ? "border-warning/60 text-warning"
+                    : modelsReady
+                      ? "border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      : "border-success/60 text-success hover:bg-success/10 hover:text-success",
+                )}
               >
                 {starting ? (
                   <Power className="animate-pulse" data-icon="inline-start" />
                 ) : modelsReady ? (
-                  <Square data-icon="inline-start" />
+                  <Square className="fill-current" data-icon="inline-start" />
                 ) : (
-                  <Play data-icon="inline-start" />
+                  <Play className="fill-current" data-icon="inline-start" />
                 )}
                 <span className="hidden sm:inline">
-                  {starting ? "Working…" : modelsReady ? "Stop" : "Start"}
+                  {starting ? "Loading…" : modelsReady ? "Stop" : "Start"}
                 </span>
               </Button>
             </TooltipTrigger>
             <TooltipContent>
               {modelsReady
-                ? "Free the models and release memory"
-                : "Load the models so the first question is not slow"}
+                ? "Free every model and release the memory"
+                : "Load speech, language and translation models up front, so the first question is not slow"}
             </TooltipContent>
           </Tooltip>
 
           <span
             className={cn(
-              "size-2 shrink-0 rounded-full",
+              "size-2.5 shrink-0 rounded-full",
               health.state.phase === "up"
                 ? modelsReady
                   ? "bg-success"

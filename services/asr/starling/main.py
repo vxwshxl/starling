@@ -167,16 +167,19 @@ def chat_endpoint(
     question: str = Form(...),
     language: str = Form("en"),
 ) -> dict[str, Any]:
-    """Answer a question from the offline knowledge base.
+    """Answer a question, in the language it was asked in.
 
-    Grounded by construction: when retrieval finds nothing, the language model
-    is never called and a fixed refusal comes back with grounded=false.
+    `kind` says where the answer came from and callers must surface it:
+    "answer" is grounded in retrieved passages and carries `sources`,
+    "general" is the model's own knowledge with nothing behind it, and
+    "small_talk" is fixed text. Only the first is sourced.
     """
     try:
         result, timings = chat.answer(question, language)
         return {
             "result": {
                 "text": result.text,
+                "text_en": result.text_en,
                 "grounded": result.grounded,
                 "kind": result.kind,
                 "language": result.language,

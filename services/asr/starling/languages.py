@@ -71,6 +71,20 @@ class Language:
     default. Set per language because no single recogniser covers them all:
     Whisper has no Bodo, IndicConformer has no Sylheti."""
 
+    translate_name: str | None = None
+    """English name Sarvam-Translate is addressed by, or None if it cannot
+    translate this language.
+
+    A third code alongside asr_code and tts_code, and for the same reason: the
+    translator names languages its own way. It takes a plain English word in
+    the prompt ("Translate the text below to Bodo.") rather than an ISO code,
+    and it recognises the 22 scheduled languages under their official English
+    names -- so Sylheti, which is not scheduled, has to travel as Bengali just
+    as it already does for TTS."""
+
+    translate_native: bool = True
+    """False when translate_name is a stand-in rather than the real language."""
+
     @property
     def label(self) -> str:
         """Human-facing label for dropdowns."""
@@ -116,6 +130,7 @@ LANGUAGES: dict[str, Language] = {
         asr_native=True,
         tts_code="as",
         tts_native=True,
+        translate_name="Assamese",
         priority=1,
     ),
     "brx": Language(
@@ -136,6 +151,7 @@ LANGUAGES: dict[str, Language] = {
         # speaking half of the pipeline is genuine too.
         tts_code="brx",
         tts_native=True,
+        translate_name="Bodo",
         priority=2,
         notes=(
             "Bodo is written in DEVANAGARI, not Bengali script. Both halves are "
@@ -158,6 +174,8 @@ LANGUAGES: dict[str, Language] = {
         # OmniVoice has no Sylheti; standard Bengali is the closest voice.
         tts_code="bn",
         tts_native=False,
+        translate_name="Bengali",
+        translate_native=False,
         priority=3,
         notes=(
             "Handled as a Bengali dialect. Whisper's 'bn' is standard Bengali, "
@@ -180,6 +198,7 @@ LANGUAGES: dict[str, Language] = {
         asr_backend="indic-conformer",
         tts_code="mni",
         tts_native=True,
+        translate_name="Manipuri",
         priority=4,
         notes=(
             "Scheduled language and official in Manipur. Both halves native. "
@@ -201,6 +220,7 @@ LANGUAGES: dict[str, Language] = {
         # off as unreachable on the strength of the wrong code.
         tts_code="npi",
         tts_native=True,
+        translate_name="Nepali",
         priority=5,
         notes=(
             "Widely spoken in Sikkim and the Darjeeling/Dooars belt. ASR code "
@@ -220,6 +240,7 @@ LANGUAGES: dict[str, Language] = {
         asr_backend="indic-conformer",
         tts_code="sat",
         tts_native=True,
+        translate_name="Santali",
         priority=6,
         notes=(
             "Scheduled language, written in Ol Chiki. Spoken in the Assam tea "
@@ -320,3 +341,18 @@ def tts_code_for(code: str) -> str:
             f"OmniVoice cannot synthesise {lang.name}. {lang.notes}"
         )
     return lang.tts_code
+
+
+def translate_name_for(code: str) -> str:
+    """The name to hand Sarvam-Translate, or raise if it cannot translate this."""
+    lang = get(code)
+    if lang.translate_name is None:
+        raise ValueError(
+            f"Sarvam-Translate does not cover {lang.name}. {lang.notes}"
+        )
+    return lang.translate_name
+
+
+def translatable(code: str) -> bool:
+    """Whether answers can be written in this language at all."""
+    return get(code).translate_name is not None
