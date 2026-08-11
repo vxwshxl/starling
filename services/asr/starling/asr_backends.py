@@ -134,6 +134,9 @@ INDIC_CONFORMER_REPOS: dict[str, str] = {
     "as": "OpenVoiceOS/ai4bharat-indicconformer-as-onnx",
     "bn": "OpenVoiceOS/ai4bharat-indicconformer-bn-onnx",
     "brx": "OpenVoiceOS/ai4bharat-indicconformer-brx-onnx",
+    "mni": "OpenVoiceOS/ai4bharat-indicconformer-mni-onnx",
+    "ne": "OpenVoiceOS/ai4bharat-indicconformer-ne-onnx",
+    "sat": "OpenVoiceOS/ai4bharat-indicconformer-sat-onnx",
 }
 
 

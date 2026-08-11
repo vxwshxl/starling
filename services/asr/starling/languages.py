@@ -165,6 +165,67 @@ LANGUAGES: dict[str, Language] = {
             "Sylheti either; output is Bengali-accented."
         ),
     ),
+    "mni": Language(
+        code="mni",
+        name="Manipuri (Meitei)",
+        native_name="ꯃꯤꯇꯩꯂꯣꯟ",
+        iso="mni",
+        # Manipuri is written in BOTH Bengali script and Meetei Mayek. The
+        # IndicConformer export emits Meetei Mayek -- verified by running audio
+        # through it and inspecting the Unicode block, not assumed.
+        script="Mtei",
+        script_name="Meetei Mayek",
+        asr_code="mni",
+        asr_native=True,
+        asr_backend="indic-conformer",
+        tts_code="mni",
+        tts_native=True,
+        priority=4,
+        notes=(
+            "Scheduled language and official in Manipur. Both halves native. "
+            "Script caveat: ASR emits Meetei Mayek, so anything feeding TTS or "
+            "translation must agree on that script rather than Bengali."
+        ),
+    ),
+    "ne": Language(
+        code="ne",
+        name="Nepali",
+        native_name="नेपाली",
+        iso="ne",
+        script="Deva",
+        script_name="Devanagari",
+        asr_code="ne",
+        asr_native=True,
+        asr_backend="indic-conformer",
+        # OmniVoice codes Nepali as "npi", not "ne". Nepali was nearly written
+        # off as unreachable on the strength of the wrong code.
+        tts_code="npi",
+        tts_native=True,
+        priority=5,
+        notes=(
+            "Widely spoken in Sikkim and the Darjeeling/Dooars belt. ASR code "
+            "is 'ne' but OmniVoice's code is 'npi' -- the two-code design earns "
+            "its keep here."
+        ),
+    ),
+    "sat": Language(
+        code="sat",
+        name="Santali",
+        native_name="ᱥᱟᱱᱛᱟᱲᱤ",
+        iso="sat",
+        script="Olck",
+        script_name="Ol Chiki",
+        asr_code="sat",
+        asr_native=True,
+        asr_backend="indic-conformer",
+        tts_code="sat",
+        tts_native=True,
+        priority=6,
+        notes=(
+            "Scheduled language, written in Ol Chiki. Spoken in the Assam tea "
+            "belt as well as Jharkhand and Odisha. Both halves native."
+        ),
+    ),
     "kha": Language(
         code="kha",
         name="Khasi",
