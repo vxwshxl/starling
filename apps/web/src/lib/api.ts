@@ -36,6 +36,45 @@ export type Health = {
   };
 };
 
+/** One entry of Health.models.asr.resident. */
+export type ResidentModel = { backend: string; model: string };
+
+export type ModelTarget = "asr" | "tts";
+
+async function post<T>(path: string, body?: FormData): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    body,
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    // The service reports failures as {"detail": "..."}; surface that rather
+    // than a bare status code, since these are usually model-load errors.
+    let detail = `HTTP ${res.status}`;
+    try {
+      const j = (await res.json()) as { detail?: string };
+      if (j.detail) detail = j.detail;
+    } catch {
+      /* non-JSON error body; the status is all we have */
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as T;
+}
+
+/** Warm a model deliberately, instead of the first request absorbing the cost. */
+export function loadModel(target: ModelTarget, language: string) {
+  const form = new FormData();
+  form.set("language", language);
+  return post<{ models: Health["models"] }>(`/models/${target}/load`, form);
+}
+
+export function unloadModel(target: ModelTarget | "all") {
+  return post<{ freed: Record<string, boolean>; models: Health["models"] }>(
+    `/models/${target}/unload`,
+  );
+}
+
 /** One entry from GET /languages. */
 export type LanguageInfo = {
   code: string;

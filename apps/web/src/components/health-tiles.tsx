@@ -1,7 +1,15 @@
 "use client";
 
-import { AudioLines, Cpu, Ear, PlugZap, RefreshCw } from "lucide-react";
-import type { ReactNode } from "react";
+import {
+  AudioLines,
+  Cpu,
+  Ear,
+  Loader2,
+  PlugZap,
+  Power,
+  RefreshCw,
+} from "lucide-react";
+import { useState, type ReactNode } from "react";
 
 import { Tile, TileLabel } from "@/components/tile";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -21,7 +29,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useHealth, type HealthState } from "@/hooks/use-health";
-import { API_BASE } from "@/lib/api";
+import {
+  API_BASE,
+  loadModel,
+  unloadModel,
+  type ModelTarget,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 function StatusDot({ phase }: { phase: HealthState["phase"] }) {
@@ -52,6 +65,10 @@ function ModelTile({
   loaded,
   badges,
   delay,
+  target,
+  busy,
+  error,
+  onToggle,
 }: {
   icon: ReactNode;
   label: string;
@@ -61,6 +78,10 @@ function ModelTile({
   loaded?: boolean;
   badges?: ReactNode;
   delay: number;
+  target: ModelTarget;
+  busy: boolean;
+  error: string | null;
+  onToggle: (target: ModelTarget, loaded: boolean) => void;
 }) {
   return (
     <Tile delay={delay} className="col-span-full sm:col-span-1 lg:col-span-2">
@@ -82,6 +103,35 @@ function ModelTile({
                 {loaded ? "resident" : "not loaded"}
               </Badge>
             </div>
+
+            <div className="space-y-2">
+              <Button
+                variant={loaded ? "outline" : "secondary"}
+                size="sm"
+                className="w-full"
+                disabled={busy}
+                onClick={() => onToggle(target, !!loaded)}
+                aria-label={
+                  loaded ? `Unload the ${label} model` : `Load the ${label} model`
+                }
+              >
+                {busy ? (
+                  <Loader2 className="animate-spin" />
+                ) : (
+                  <Power data-icon="inline-start" />
+                )}
+                {busy
+                  ? loaded
+                    ? "Freeing…"
+                    : "Loading…"
+                  : loaded
+                    ? "Unload"
+                    : "Load"}
+              </Button>
+              {error && (
+                <p className="text-xs text-balance text-destructive">{error}</p>
+              )}
+            </div>
           </>
         )}
       </CardContent>
@@ -91,6 +141,36 @@ function ModelTile({
 
 export function HealthTiles() {
   const { state, refreshing, lastCheckedAt, refresh } = useHealth();
+
+  const [busy, setBusy] = useState<ModelTarget | null>(null);
+  const [errors, setErrors] = useState<Partial<Record<ModelTarget, string>>>({});
+
+  // ASR ships one recogniser per language, so loading it needs a language.
+  // /health lists enabled codes in the brief's priority order, so the first is
+  // the default -- no second request just to learn that.
+  const defaultLanguage =
+    state.phase === "up" ? (state.health.languages[0] ?? "as") : "as";
+
+  async function toggle(target: ModelTarget, loaded: boolean) {
+    setBusy(target);
+    setErrors((e) => ({ ...e, [target]: undefined }));
+    try {
+      if (loaded) {
+        await unloadModel(target);
+      } else {
+        await loadModel(target, defaultLanguage);
+      }
+    } catch (err) {
+      setErrors((e) => ({
+        ...e,
+        [target]: err instanceof Error ? err.message : String(err),
+      }));
+    } finally {
+      setBusy(null);
+      // Loading changes what is resident, and the poll is up to 5s away.
+      refresh();
+    }
+  }
 
   const heading =
     state.phase === "up"
@@ -199,6 +279,10 @@ export function HealthTiles() {
         delay={120}
         icon={<Ear className="size-3" />}
         label="Recognition"
+        target="asr"
+        busy={busy === "asr"}
+        error={errors.asr ?? null}
+        onToggle={toggle}
         hint="Turns the speaker's audio into text. Swapped for an Indic model in phase 2."
         state={state}
         model={state.phase === "up" ? state.health.models.asr.model : undefined}
@@ -216,6 +300,10 @@ export function HealthTiles() {
         delay={180}
         icon={<AudioLines className="size-3" />}
         label="Synthesis"
+        target="tts"
+        busy={busy === "tts"}
+        error={errors.tts ?? null}
+        onToggle={toggle}
         hint="Speaks the reply, cloning the voice from the speaker's own recording."
         state={state}
         model={state.phase === "up" ? state.health.models.tts.model : undefined}

@@ -138,19 +138,42 @@ def status() -> dict[str, Any]:
     }
 
 
-def unload_all() -> dict[str, bool]:
-    """Free both models. Returns what was actually resident beforehand."""
+def load(target: str, language_code: str | None = None) -> dict[str, Any]:
+    """Warm a model on demand, so the UI can pay the load cost deliberately.
+
+    Without this the first real request absorbs several seconds of loading and
+    looks like a hang. Returns the post-load status.
+    """
+    if target == "asr":
+        get_asr(language_code)
+    elif target == "tts":
+        get_tts()
+    else:
+        raise ValueError(f"Unknown target {target!r}. Use 'asr' or 'tts'.")
+    return status()
+
+
+def unload(target: str = "all") -> dict[str, bool]:
+    """Free models. `target` is 'asr', 'tts' or 'all'.
+
+    Returns what was actually resident beforehand, so a caller can tell the
+    difference between freeing memory and doing nothing.
+    """
     global _asr, _tts
+
+    if target not in ("asr", "tts", "all"):
+        raise ValueError(f"Unknown target {target!r}. Use 'asr', 'tts' or 'all'.")
 
     freed = {"asr": False, "tts": False}
 
-    for backend in _asr.values():
-        if backend.loaded:
-            backend.unload()
-            freed["asr"] = True
-    _asr.clear()
+    if target in ("asr", "all"):
+        for backend in _asr.values():
+            if backend.loaded:
+                backend.unload()
+                freed["asr"] = True
+        _asr.clear()
 
-    if _tts is not None:
+    if target in ("tts", "all") and _tts is not None:
         del _tts
         _tts = None
         freed["tts"] = True
@@ -164,5 +187,10 @@ def unload_all() -> dict[str, bool]:
     except Exception:  # pragma: no cover - best effort
         pass
 
-    logger.info("unload_all freed: %s", freed)
+    logger.info("unload(%s) freed: %s", target, freed)
     return freed
+
+
+def unload_all() -> dict[str, bool]:
+    """Free everything. Kept as the name lab.py and POST /unload already use."""
+    return unload("all")

@@ -160,7 +160,31 @@ def get_audio(name: str) -> FileResponse:
 
 @app.post("/unload")
 def unload() -> dict[str, Any]:
+    """Free everything. Kept for the lab's existing button."""
     return {"freed": models.unload_all(), "models": models.status()}
+
+
+@app.post("/models/{target}/load")
+def load_model(
+    target: str, language: str = Form(languages.DEFAULT_LANGUAGE)
+) -> dict[str, Any]:
+    """Warm one model so the UI can pay the load cost on a button press.
+
+    `language` only matters for ASR, which has one recogniser per language.
+    """
+    try:
+        return {"models": models.load(target, language)}
+    except Exception as exc:
+        raise _fail(exc) from exc
+
+
+@app.post("/models/{target}/unload")
+def unload_model(target: str) -> dict[str, Any]:
+    """Free one model: 'asr', 'tts' or 'all'."""
+    try:
+        return {"freed": models.unload(target), "models": models.status()}
+    except Exception as exc:
+        raise _fail(exc) from exc
 
 
 def run() -> None:

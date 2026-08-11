@@ -4,15 +4,19 @@
   "private": true,
   "description": "Speech-to-speech AI assistant for low-resource Northeast Indian languages",
   "scripts": {
+    "dev": "concurrently --kill-others --names api,web --prefix-colors magenta,cyan \"pnpm dev:api\" \"pnpm dev:web\"",
     "dev:web": "pnpm --filter @starling/web dev",
     "build:web": "pnpm --filter @starling/web build",
-    "dev:api": "cd services/asr && uv run uvicorn starling.main:app --reload --port 8000",
-    "lab": "cd services/asr && uv run python -m starling.lab",
+    "dev:api": "cd services/asr && STARLING_DEVICE=cpu uv run uvicorn starling.main:app --reload --port 8000",
+    "lab": "cd services/asr && STARLING_DEVICE=cpu uv run python -m starling.lab",
     "smoke": "cd services/asr && uv run python -m starling.smoke",
     "setup:api": "cd services/asr && uv sync"
   },
   "engines": {
     "node": ">=20"
   },
-  "packageManager": "pnpm@10.26.2"
+  "packageManager": "pnpm@10.26.2",
+  "devDependencies": {
+    "concurrently": "^10.0.4"
+  }
 }
