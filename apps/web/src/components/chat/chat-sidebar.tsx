@@ -192,7 +192,12 @@ export function ChatSidebar({
                     {l.native_name}
                   </span>
                   <span className="flex items-center gap-1 truncate text-xs text-muted-foreground">
-                    {l.name.split(" / ")[0]}
+                    {/* English is the one row where the endonym and the
+                        English name are the same word, and printing both
+                        reads as a rendering bug. The line stays for the
+                        coverage markers and to keep every row the same
+                        height. */}
+                    {l.name === l.native_name ? null : l.name.split(" / ")[0]}
                     {asr !== "native" && (
                       <span
                         className="text-warning"

@@ -5,6 +5,17 @@ tell the browser what to do out loud. Everything runs against the Starling
 service on `127.0.0.1:8000` — the same models as the main app, on the same
 machine.
 
+**English is in the picker too**, at the bottom. It is not a sixth language so
+much as the absence of two stages: English is the pivot the whole cascade runs
+through, so choosing it skips both translation legs, never loads Sarvam
+(2.6 GB that an English session cannot use), and answers in seconds rather than
+tens of seconds. It is also the control — when an answer in Bodo looks wrong,
+asking the same thing in English is how you tell a bad answer apart from a bad
+translation. The one thing it cannot do is translate a page: page translation
+runs English → your language with the source assumed rather than detected, so
+asking for English is asking for the page you are already looking at, and the
+panel says so instead of reporting a confident 100%.
+
 It is a chat. One box, and what you type decides what happens:
 
 | You type | What happens |
@@ -162,8 +173,35 @@ content/
                      <em> is still translated as one sentence.
   agent.js           Numbers the interactive elements, performs one action,
                      reports what changed. Draws the ring.
+  glow.js            The working glow: a ring round the page for as long as a
+                     run lasts, with a pill saying what is happening to it.
+                     Removes itself if the panel stops asserting it.
 sidepanel/           The UI, and the owner of both loops.
 ```
+
+### The working glow
+
+While a run is going, the page it is going on wears a glowing border and a
+small caption — the same text as the panel's own trace line, attributed, so an
+unlabelled *"Thinking…"* on a page you are reading belongs to somebody.
+
+It is on the page rather than only in the panel because the panel is a 380 px
+strip and the interesting half of the screen is the other one: with several
+tabs open and one panel shared between them, "which page is being worked on"
+is the question a spinner cannot answer.
+
+Two details are load-bearing:
+
+- **The page cannot be trusted to take it off.** Closing the side panel kills
+  `panel.js` without telling any content script, and the ring would sit there
+  for ever. So `glow.js` removes it if it stops hearing from the panel, and the
+  panel re-asserts it every 6 s. That heartbeat doubles as the repaint after a
+  navigation — the agent's whole job is to destroy the document the ring was
+  drawn on.
+- **Neither Starling half may see it.** The host carries `data-starling-ui`
+  and lives outside `<body>`, so the translation walker cannot translate our
+  own caption and the element index cannot offer the agent its own decoration
+  to click.
 
 ### Why the panel runs the loops
 

@@ -171,7 +171,14 @@ def load(target: str, language_code: str | None = None) -> dict[str, Any]:
         # cheap end first and the user sees progress rather than one long wait.
         get_asr(language_code)
         llm.load()
-        translate.load()
+        # ...except the translator, when the chosen language is the pivot
+        # itself. An English session never calls either translation leg, so
+        # warming Sarvam would spend 2.6 GB of a 16 GB machine on a model
+        # that cannot be asked to do anything. Switching to an Indic language
+        # afterwards pays the load on the first request, which is the same
+        # deal every other model here already offers.
+        if (language_code or languages.DEFAULT_LANGUAGE) != "en":
+            translate.load()
         get_tts()
     else:
         raise ValueError(

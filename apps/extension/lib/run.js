@@ -10,6 +10,53 @@ import { call, inject, send, waitForLoad } from "./tabs.js";
 
 const TRANSLATE_SCRIPT = "content/translate.js";
 const AGENT_SCRIPT = "content/agent.js";
+const GLOW_SCRIPT = "content/glow.js";
+
+// ---------------------------------------------------------------------------
+// The working glow
+// ---------------------------------------------------------------------------
+//
+// A ring around the page being worked on, for as long as the work lasts. See
+// content/glow.js for what it draws and why it removes itself.
+//
+// Both helpers swallow every failure, deliberately. The glow is the least
+// important thing happening: a chrome:// tab that refuses injection, a page
+// that navigated out from under the message, a panel that has already moved
+// on -- none of those are worth turning a working run into a red error box,
+// and the run itself already reports anything that actually matters.
+
+/** Paint the glow, injecting the script if this document has not got it yet.
+ *
+ *  Message first, inject second, rather than always injecting: the panel
+ *  re-asserts the glow every few seconds to keep the page's watchdog fed, and
+ *  scripting a page fifteen times a minute to say nothing new is wasteful.
+ *  The inject path is what puts the ring back after the agent navigates.
+ */
+export async function showGlow(tabId, label) {
+  if (tabId == null) return false;
+  try {
+    await send(tabId, { type: "sl:glow", on: true, label });
+    return true;
+  } catch {
+    try {
+      await call(tabId, GLOW_SCRIPT, { type: "sl:glow", on: true, label });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/** Take the glow off. Never injects -- nothing to remove is a success. */
+export async function hideGlow(tabId) {
+  if (tabId == null) return false;
+  try {
+    await send(tabId, { type: "sl:glow", on: false });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Page translation

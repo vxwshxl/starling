@@ -401,7 +401,8 @@ def _extension_manifest() -> str:
     ]
     # The content scripts are injected programmatically rather than declared,
     # so the manifest does not name them and this has to.
-    referenced += ["content/translate.js", "content/agent.js", "lib/api.js",
+    referenced += ["content/translate.js", "content/agent.js", "content/glow.js",
+                   "lib/api.js",
                    "lib/tabs.js", "lib/run.js", "sidepanel/panel.js",
                    "sidepanel/panel.css", "permission.html", "permission.js"]
     missing = [path for path in referenced if not (root / path).is_file()]

@@ -19,6 +19,7 @@ import {
   detectRestoreIntent,
   fillSecret as fillSecretIn,
   goTo,
+  hideGlow,
   hostOf,
   sameSite,
   readPage,
@@ -26,6 +27,7 @@ import {
   runAgent,
   runTranslation,
   searchUrl,
+  showGlow,
   translateNewSegments,
 } from "../lib/run.js";
 
@@ -61,6 +63,13 @@ const state = {
   stopRequested: false,
   recorder: null,
   translated: false,
+  /** The tab currently wearing the working glow, and the ticker keeping it
+   *  alive. Held separately from `tabId` because the run belongs to the tab
+   *  it started on: switching tabs mid-run must not move the ring off the
+   *  page that is actually being worked on. */
+  glowTab: null,
+  glowTimer: null,
+  glowLabel: "",
   /** {role, text} turns sent to the model so follow-ups resolve. Trimmed to
    *  the last few by agent.py; kept whole here for the transcript. */
   conversation: [],
@@ -112,7 +121,13 @@ function startBotTurn() {
   return {
     msg,
     trace,
-    setLabel(text) { label.textContent = text; },
+    setLabel(text) {
+      label.textContent = text;
+      // The page's pill says the same thing as the panel's trace line, so
+      // there is one story and not two. Attributed, because on a page you
+      // are reading, an unlabelled "Thinking…" belongs to nobody.
+      paintGlow(`Starling · ${text}`);
+    },
     stopSpinner() { spinner.remove(); },
     addStep(nodes, why) {
       count++;
@@ -421,10 +436,51 @@ function setStatus(kind, title) {
   ui.status.title = title;
 }
 
+// ---------------------------------------------------------------------------
+// The working glow
+// ---------------------------------------------------------------------------
+//
+// While a run is going, the page it is going on wears a ring. The panel is a
+// narrow strip and the interesting half of the screen is the other one, so
+// the state that matters -- "this is being worked on, and this is what it is
+// doing" -- is put where the user is already looking.
+//
+// The page cannot be trusted to take the ring off by itself: closing the side
+// panel kills this file without a word to any content script. So glow.js
+// removes the ring if it stops hearing from us, and this ticker is what it
+// hears. It doubles as the repaint after a navigation, since the agent's
+// whole job is to destroy the document the ring was drawn on.
+
+const GLOW_PING_MS = 6000;
+
+function paintGlow(label) {
+  if (label) state.glowLabel = label;
+  if (!state.busy || state.glowTab == null) return;
+  void showGlow(state.glowTab, state.glowLabel);
+}
+
+function startGlow(label) {
+  state.glowTab = state.tabId;
+  state.glowLabel = label || "Starling is working on this page";
+  paintGlow();
+  clearInterval(state.glowTimer);
+  state.glowTimer = setInterval(() => paintGlow(), GLOW_PING_MS);
+}
+
+function stopGlow() {
+  clearInterval(state.glowTimer);
+  state.glowTimer = null;
+  const tab = state.glowTab;
+  state.glowTab = null;
+  void hideGlow(tab);
+}
+
 function setBusy(busy) {
   state.busy = busy;
   ui.send.hidden = busy;
   ui.stop.hidden = !busy;
+  if (busy) startGlow();
+  else stopGlow();
   // The input deliberately stays enabled. Disabling it meant that noticing
   // the agent going the wrong way and wanting to redirect it left you with
   // nothing to do but watch. Sending while it works interrupts and starts the
@@ -546,7 +602,12 @@ async function loadLanguages() {
     path.setAttribute("d", "m5 13 4 4L19 7");
     tick.append(path);
 
-    option.append(tick, el("span", "native", language.native_name), el("span", "latin", language.name));
+    option.append(tick, el("span", "native", language.native_name));
+    // Every row is "endonym, then English name" -- except English, where the
+    // two are the same word and the row would read "English English".
+    if (language.name !== language.native_name) {
+      option.append(el("span", "latin", language.name));
+    }
     option.addEventListener("click", () => {
       target.value = language.code;
       chrome.storage.local.set({ target: language.code });
@@ -565,6 +626,22 @@ async function loadLanguages() {
 // ---------------------------------------------------------------------------
 
 async function doTranslate(turn, target) {
+  // English is the pivot, and page translation runs English -> your language
+  // with the source assumed, not detected. Asking for English is therefore
+  // asking for the page you are already looking at: the service would return
+  // every segment unchanged and the card would report a confident 100% having
+  // done nothing at all. Say so instead.
+  if (target === "en") {
+    turn.finish(
+      "Nothing to translate",
+      "You are set to English, and this page is read as English already, so " +
+        "there is nothing to translate. Pick Assamese, Bodo, Bengali, " +
+        "Manipuri or Nepali and ask again — or keep English and ask me about " +
+        "the page instead, which is the fast path: no translation either way.",
+    );
+    return;
+  }
+
   const language = state.languages.find((l) => l.code === target);
   turn.setLabel(`Translating into ${language ? language.name : target}…`);
 
@@ -598,6 +675,7 @@ async function doTranslate(turn, target) {
         const p = Math.round((event.done / Math.max(event.total, 1)) * 100);
         fill.style.width = `${p}%`;
         pct.textContent = `${p}%`;
+        paintGlow(`Starling · translating this page — ${p}%`);
         counts.replaceChildren(
           el("span", "", `translated `), el("b", "", String(event.counts.translated)),
           el("span", "", ` · cached `), el("b", "", String(event.counts.from_cache)),
@@ -1250,10 +1328,23 @@ chrome.runtime.onMessage.addListener((message, sender) => {
 
 chrome.tabs.onActivated.addListener(refreshTab);
 chrome.tabs.onUpdated.addListener((tabId, info) => {
-  if (tabId === state.tabId && info.status === "complete") {
+  if (info.status !== "complete") return;
+  // A load destroys the content script and the ring with it. The ticker would
+  // put it back within a few seconds; doing it here as well means the gap is
+  // a frame rather than a pause, which matters because navigating IS what the
+  // agent spends most of its time doing.
+  if (tabId === state.glowTab) paintGlow();
+  if (tabId === state.tabId) {
     state.translated = false; // a reload discards the translated DOM
     refreshTab();
   }
+});
+
+// Closing the side panel is the one way a run ends without setBusy(false).
+// Best effort only -- the panel may be gone before the message lands, which
+// is exactly why glow.js has a watchdog rather than trusting this.
+window.addEventListener("pagehide", () => {
+  if (state.glowTab != null) void hideGlow(state.glowTab);
 });
 
 async function boot() {

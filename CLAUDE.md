@@ -231,8 +231,21 @@ Verified against the installed packages, not assumed:
 | Bengali | `bn` | Bengali | `bn` native — Whisper | `bn` native | `Bengali` |
 | Manipuri (Meitei) | `mni` | Meetei Mayek | `mni` native — IndicConformer | `mni` native | `Manipuri` |
 | Nepali | `ne` | Devanagari | `ne` native — IndicConformer | `npi` native | `Nepali` |
+| English | `en` | Latin | `en` native — Whisper | `en` native | *pivot — no translation* |
 | Khasi | `kha` | Latin | none | none — *disabled* | none |
 | Mizo | `lus` | Latin | none | `lus` native — *disabled* | none |
+
+**English is in the list, and it is the pivot rather than a sixth language.**
+Choosing it does not add a translation direction, it removes both: the question
+already arrives in the language the knowledge base, the answering model and the
+page agent reason in, so `translate.to_english`/`from_english` return their
+input untouched, `models.load("all", "en")` skips Sarvam entirely (2.6 GB an
+English session cannot use), and an answer costs seconds rather than tens of
+seconds. It is also the control — asking the same question in English is how
+you tell a bad answer apart from a bad translation. The one thing it cannot do
+is page translation: that runs English → your language with the source
+*assumed*, so the extension refuses it with an explanation rather than
+reporting a confident 100% having changed nothing.
 
 **Every enabled language is native in all three stages** — no fallbacks left.
 That is the bar for adding one: a language that would borrow another's
@@ -338,7 +351,18 @@ guard exists because prompting was tried first and measured to fail:
 `agent.redact()` and its twin in `panel.js` strip identifier-shaped digit runs
 from logs and from the chat history on both sides.
 
-4. **Questions do not go through the action prompt.** `POST /page/ask` has its
+4. **The page being worked on says so, on the page.** `content/glow.js` puts a
+   glowing border and a one-line caption on the tab for as long as a run
+   lasts. The panel is a 380 px strip and the interesting half of the screen is
+   the other one; with several tabs open and one panel shared between them, a
+   spinner in the panel cannot answer "which page is this happening to". The
+   ring cannot be trusted to remove itself, though: closing the side panel
+   kills `panel.js` with no word to any content script, so `glow.js` runs a
+   watchdog and drops the ring if the panel stops re-asserting it every 6 s.
+   That heartbeat is also the repaint after a navigation, which the agent
+   causes constantly.
+
+5. **Questions do not go through the action prompt.** `POST /page/ask` has its
    own prompt with no action vocabulary in it. Measured: asked to explain
    eligibility from page text that plainly contained the answer, the action
    prompt kept replying `click`, through three rewordings. The problem was not
@@ -388,6 +412,8 @@ apps/extension/         MV3, no build step. Load unpacked. See its README.
   lib/run.js             runTranslation() and runAgent()
   content/translate.js   DOM walk, viewport ordering, apply, restore
   content/agent.js       element index, action execution, the highlight ring
+  content/glow.js        the working glow: a ring on the page for as long as a
+                         run lasts, with its own watchdog
   sidepanel/             the UI, and the owner of both loops
 
 apps/web/               Next.js 15 App Router, TS, Tailwind 4. The chatbot.

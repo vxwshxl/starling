@@ -21,6 +21,15 @@ in everything but the label -- Bengali's ASR, Bengali's voice, Bengali's
 translation, and three warnings saying so. Bengali itself is in the list now,
 which is the honest version of the same capability.
 
+English is in the list too, and it is not one of the five: it is the pivot.
+Choosing it does not add a translation direction, it removes both of them --
+the question arrives in the language the knowledge base, the answering model
+and the page agent already reason in, so `translate.to_english` and
+`translate.from_english` return their input untouched and Sarvam is never
+loaded. That makes it the fast path and the control: when a Bodo answer looks
+wrong, asking the same thing in English is how you tell a bad answer apart
+from a bad translation.
+
 The machinery for fallbacks survives regardless -- `asr_native`,
 `tts_native`, `translate_native` and `warnings()` all still work -- because
 the next language somebody wants will probably need it, and a half-supported
@@ -241,6 +250,39 @@ LANGUAGES: dict[str, Language] = {
             "Widely spoken in Sikkim and the Darjeeling/Dooars belt. ASR code "
             "is 'ne' but OmniVoice's code is 'npi' -- the two-code design earns "
             "its keep here."
+        ),
+    ),
+    "en": Language(
+        code="en",
+        name="English",
+        native_name="English",
+        iso="en",
+        script="Latn",
+        script_name="Latin",
+        # Native in both speech stages, verified the same way as every other
+        # entry: "en" is in mlx_whisper.tokenizer.LANGUAGES and in
+        # omnivoice.utils.lang_map.LANG_IDS.
+        asr_code="en",
+        asr_native=True,
+        tts_code="en",
+        tts_native=True,
+        # Sarvam can write English, but nothing ever asks it to: English is
+        # the pivot, so translate.to_english() and translate.from_english()
+        # both return the text unchanged for this code and the translator is
+        # never loaded. The name is filled in anyway so `translatable("en")`
+        # answers truthfully rather than by omission.
+        translate_name="English",
+        priority=6,  # last in the picker: the Indic languages are the point
+        notes=(
+            "English is the cascade's pivot, so choosing it does not add a "
+            "language -- it removes two stages. The question is already in "
+            "the language the knowledge base, the answering model and the "
+            "page agent all reason in, so both translation legs drop out and "
+            "an answer costs seconds rather than tens of seconds, with no "
+            "translation to be wrong. It is in the picker because a working "
+            "English path is how you tell a bad answer apart from a bad "
+            "translation, and because plenty of people in the Northeast read "
+            "English and would rather have the fast, exact reply."
         ),
     ),
     "kha": Language(
